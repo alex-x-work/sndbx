@@ -10,9 +10,12 @@
       "models": {
         "qwen3.5": {
           "name": "qwen3.5"
+        },
+        "qwen3.6:27b": {
+          "name": "qwen3.6:27b"
         }
       }
     }
   },
-  "model": "ollama/qwen3.5"
+  "model": "ollama/qwen3.6:27b"
 }
