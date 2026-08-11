@@ -3,6 +3,7 @@ FROM ubuntu:26.04
 SHELL ["/bin/bash", "-c"]
 
 ARG USER=ubuntu
+ARG NVM_VERSION=v0.40.6
 ARG NODE_VERSION=24
 
 RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
@@ -10,15 +11,16 @@ RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 USER ${USER}
-WORKDIR /home/${USER}
 ENV HOME=/home/${USER}
 
+WORKDIR ${HOME}
+
 RUN curl -fsSL https://claude.ai/install.sh | bash
-RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.6/install.sh | bash
-RUN source /home/ubuntu/.nvm/nvm.sh \
+RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh | bash
+RUN source ${HOME}/.nvm/nvm.sh \
   && nvm install ${NODE_VERSION}
 
-ENV CLAUDE_CONFIG_DIR=/home/${USER}/.claude
-ENV PATH=/home/${USER}/.local/bin:$PATH
+ENV CLAUDE_CONFIG_DIR=${HOME}/.claude
+ENV PATH=${HOME}/.local/bin:$PATH
 
 WORKDIR /workspace
