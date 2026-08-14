@@ -17,5 +17,5 @@
       }
     }
   },
-  "model": "ollama/qwen3.6:27b"
+  "model": "ollama/qwen3.5"
 }
