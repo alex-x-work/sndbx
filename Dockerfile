@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
   curl ca-certificates git openssh-client jq iputils-ping \
-  chromium-browser nodejs npm \
+  chromium-browser nodejs npm ruby python3 python3-pip \
   && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g npm@latest pnpm
