@@ -1,4 +1,4 @@
-FROM ubuntu-build:26.08.14
+FROM ubuntu-build:26.08.15
 
 ARG USER=ubuntu
 
