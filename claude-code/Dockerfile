@@ -1,11 +1,4 @@
-FROM ubuntu-build:26.08.15
-
-ARG USER=ubuntu
-
-USER ${USER}
-ENV HOME=/home/${USER}
-
-WORKDIR ${HOME}
+FROM ubuntu-build:26.08.17
 
 RUN curl -fsSL https://claude.ai/install.sh | bash
 

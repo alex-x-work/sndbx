@@ -1,14 +1,8 @@
-FROM ubuntu-build:26.08.15
+FROM ubuntu-build:26.08.17
 
-ARG USER=ubuntu
-
-USER ${USER}
-ENV HOME=/home/${USER}
-
-WORKDIR ${HOME}
-
+RUN mkdir ~/.config
 RUN curl -fsSL https://opencode.ai/install | bash
 
-ENV PATH=/home/${USER}/.opencode/bin:$PATH
+ENV PATH=${HOME}/.opencode/bin:$PATH
 
 WORKDIR /workspace
