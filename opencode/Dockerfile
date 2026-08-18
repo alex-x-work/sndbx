@@ -1,4 +1,4 @@
-FROM ubuntu-build:26.08.18
+FROM ubuntu-build:latest
 
 RUN mkdir -p ~/.config ~/.local/share
 RUN curl -fsSL https://opencode.ai/install | bash

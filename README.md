@@ -1,7 +1,15 @@
 # BUILD
 
-# Base image
-docker build --no-cache -t ubuntu-build:YY.MM.DD .
+Build the base image first, then the claude/opencode images (they're `FROM ubuntu-build:<tag>`).
+
+## 1. Base image
+
+docker build --no-cache -t ubuntu-build:latest .
+
+## 2. Claude / OpenCode images
+
+docker build -t claude ./claude-code
+docker build -t opencode ./opencode
 
 
 # USAGE

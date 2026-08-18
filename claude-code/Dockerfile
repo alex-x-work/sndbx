@@ -1,4 +1,4 @@
-FROM ubuntu-build:26.08.18
+FROM ubuntu-build:latest
 
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
