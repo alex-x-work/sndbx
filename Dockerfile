@@ -9,7 +9,7 @@ RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
   nodejs npm ruby python3 python3-pip \
   libglib2.0-0t64 libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
   libxkbcommon0 libasound2t64 libgbm1 libxcomposite1 libxdamage1 \
-  libxfixes3 libxrandr2 libatspi2.0-0t64 \
+  libxfixes3 libxrandr2 libatspi2.0-0t64 librsvg2-bin \
   && rm -rf /var/lib/apt/lists/*
 
 USER ${USER}
