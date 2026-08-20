@@ -6,3 +6,5 @@ RUN curl -fsSL https://opencode.ai/install | bash
 ENV PATH=${HOME}/.opencode/bin:$PATH
 
 WORKDIR /workspace
+
+CMD ["opencode"]
