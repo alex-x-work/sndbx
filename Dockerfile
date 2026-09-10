@@ -9,7 +9,7 @@ SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
-  curl ca-certificates git openssh-client jq iputils-ping gcc gpg \
+  curl ca-certificates git openssh-client jq iputils-ping gcc gpg make \
   python3 python3-pip \
   ruby3.3-dev build-essential libpq-dev postgresql \
   libglib2.0-0t64 libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 \
