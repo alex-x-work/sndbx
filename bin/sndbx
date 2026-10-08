@@ -4,16 +4,16 @@ require 'fileutils'
 require 'optparse'
 require 'yaml'
 
-VERSION = '0.3.1'.freeze
+VERSION = '0.4.0'.freeze
 
-class SbxCliParser
+class SndbxCliParser
   def call
     volumes = []
     ports = []
     workdir = nil
 
     OptionParser.new do |opts|
-      opts.banner = 'Usage: sbx image [options]'
+      opts.banner = 'Usage: sndbx image [options]'
       opts.separator ''
       opts.separator "Runs a sandboxed image from #{Settings::PATH}."
       opts.separator 'Mounts the current directory unless volumes are given.'
@@ -37,7 +37,7 @@ class SbxCliParser
       end
 
       opts.on('-V', '--version', 'Print version') do
-        puts "sbx #{VERSION}"
+        puts "sndbx #{VERSION}"
         exit(0)
       end
 
@@ -56,7 +56,7 @@ class SbxCliParser
 end
 
 class Settings
-  DIR = File.join(Dir.home, '.config', 'sbx').freeze
+  DIR = File.join(Dir.home, '.config', 'sndbx').freeze
   PATH = File.join(DIR, 'settings.yml').freeze
   HOME_ROOT = '/home'.freeze
 
@@ -65,7 +65,7 @@ class Settings
       - name: claude
         alias: claude:latest # optional, defaults to name
         user: ubuntu
-        config_dir: ~/.claude_docker # optional, defaults to ~/.config/sbx/<name>
+        config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
         config_target: .claude # optional, relative to the user's home, defaults to .<name>
         ports: ['3000'] # optional, always published; quote them, YAML reads 8080:22 as a number
   YAML
@@ -195,6 +195,6 @@ class Sandbox
 end
 
 ARGV << '-h' if ARGV.empty?
-options = SbxCliParser.new.call
+options = SndbxCliParser.new.call
 
 Sandbox.new(**options.merge(image: Settings.new.image(options[:image]))).call

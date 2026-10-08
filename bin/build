@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Build an image from images/<name>/, always without the docker cache.
-# An image built FROM sbx:base gets the base image built first, but only if it doesn't exist yet.
+# An image built FROM sndbx:base gets the base image built first, but only if it doesn't exist yet.
 
 set -euo pipefail
 
 IMAGES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../images" && pwd)"
 BASE_NAME=base
-BASE_TAG=sbx:base
+BASE_TAG=sndbx:base
 
 fail() {
   echo "Error: $*" >&2

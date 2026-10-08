@@ -1,6 +1,6 @@
 #!/bin/bash
 
-_sbx() {
+_sndbx() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
   local options='-v --volume -w --workdir -p --publish -l --list -V --version -h --help'
@@ -38,7 +38,7 @@ _sbx() {
       if [[ "${cur}" == -* ]]; then
         COMPREPLY=( $(compgen -W "${options}" -- "${cur}") )
       elif (( ! has_image )); then
-        COMPREPLY=( $(compgen -W "$(sbx --list 2>/dev/null)" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "$(sndbx --list 2>/dev/null)" -- "${cur}") )
       else
         COMPREPLY=()
       fi
@@ -48,4 +48,4 @@ _sbx() {
   return 0
 }
 
-complete -F _sbx sbx
+complete -F _sndbx sndbx

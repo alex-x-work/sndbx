@@ -1,4 +1,4 @@
-FROM sbx:base
+FROM sndbx:base
 
 RUN curl -fsSL https://claude.ai/install.sh | bash
 

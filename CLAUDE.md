@@ -1,3 +1,3 @@
-# sbx
+# sndbx
 
-- Bump `VERSION` in `bin/sbx` on every code change to sbx (`bin/sbx`, `completions/_sbx`): patch for fixes, minor for new features or options.
+- Bump `VERSION` in `bin/sndbx` on every code change to sndbx (`bin/sndbx`, `completions/_sndbx`): patch for fixes, minor for new features or options.

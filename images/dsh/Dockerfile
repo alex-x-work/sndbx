@@ -1,4 +1,4 @@
-FROM sbx:base
+FROM sndbx:base
 
 RUN git clone https://github.com/deepseek-ai/deepseek-harness ~/dsh
 

@@ -1,6 +1,6 @@
-# sbx
+# sndbx
 
-Docker images for running coding agents in a sandbox, plus `sbx`, a small wrapper around `docker run`.
+Docker images for running coding agents in a sandbox, plus `sndbx`, a small wrapper around `docker run`.
 
 | Image      | Directory          | Config on host | Config in container             |
 | ---------- | ------------------ | -------------- | ------------------------------- |
@@ -8,21 +8,21 @@ Docker images for running coding agents in a sandbox, plus `sbx`, a small wrappe
 | `opencode` | `images/opencode/` | `~/.opencode`  | `/home/ubuntu/.config/opencode` |
 | `dsh`      | `images/dsh/`      | `~/.dsh`       | `/home/ubuntu/.dsh` (port 3080) |
 
-All three are built `FROM sbx:base`, the base image in `images/base/` (Ubuntu with node, ruby and python via mise, postgres and Playwright dependencies).
+All three are built `FROM sndbx:base`, the base image in `images/base/` (Ubuntu with node, ruby and python via mise, postgres and Playwright dependencies).
 
 ## Build
 
-`bin/build IMAGE` builds `images/IMAGE/`, always with `--no-cache`. The base image is tagged `sbx:base`, every other image is tagged with its directory name.
+`bin/build IMAGE` builds `images/IMAGE/`, always with `--no-cache`. The base image is tagged `sndbx:base`, every other image is tagged with its directory name.
 
 ```sh
-bin/build claude    # build/rebuild claude, and sbx:base first if it doesn't exist yet
-bin/build base      # build/rebuild sbx:base
-bin/build --all     # build/rebuild sbx:base, then every other image
+bin/build claude    # build/rebuild claude, and sndbx:base first if it doesn't exist yet
+bin/build base      # build/rebuild sndbx:base
+bin/build --all     # build/rebuild sndbx:base, then every other image
 ```
 
-`bin/build claude` won't rebuild an existing `sbx:base`. To pick up base changes, run `bin/build base` before it.
+`bin/build claude` won't rebuild an existing `sndbx:base`. To pick up base changes, run `bin/build base` before it.
 
-To add an image, create `images/<name>/Dockerfile` starting with `FROM sbx:base`.
+To add an image, create `images/<name>/Dockerfile` starting with `FROM sndbx:base`.
 
 ## Run with docker
 
@@ -46,9 +46,9 @@ docker run --rm -it \
   dsh
 ```
 
-## Run with sbx
+## Run with sndbx
 
-`sbx` does the same with less typing. It:
+`sndbx` does the same with less typing. It:
 
 - mounts the current directory, or each `-v DIR`, at `/workspace/<basename>`
 - mounts the image's config directory at `/home/<user>/<config_target>`
@@ -59,20 +59,20 @@ docker run --rm -it \
 Put `bin` on `PATH` and source the bash completions, or copy both files wherever you keep them:
 
 ```sh
-export PATH="/path/to/sbx/bin:$PATH"
-source /path/to/sbx/completions/_sbx
+export PATH="/path/to/sndbx/bin:$PATH"
+source /path/to/sndbx/completions/_sndbx
 ```
 
 ### Configure
 
-Images are listed in `~/.config/sbx/settings.yml`. The first run creates an example to edit.
+Images are listed in `~/.config/sndbx/settings.yml`. The first run creates an example to edit.
 
 ```yaml
 images:
   - name: claude
     alias: claude:latest # optional, defaults to name
     user: ubuntu
-    config_dir: ~/.claude # optional, defaults to ~/.config/sbx/<name>
+    config_dir: ~/.claude # optional, defaults to ~/.config/sndbx/<name>
     config_target: .claude # optional, relative to the user's home, defaults to .<name>
   - name: opencode
     user: ubuntu
@@ -87,10 +87,10 @@ images:
 ### Use
 
 ```sh
-sbx claude                               # mount the current directory
-sbx claude -v ../api -v ../web           # mount several, start in the last one
-sbx claude -v ../api -v ../web -w api    # mount several, start in api
-sbx claude -p 3000 -p 8080:80            # publish ports, 3000 means 3000:3000
-sbx --list                               # print configured image names
-sbx --version
+sndbx claude                               # mount the current directory
+sndbx claude -v ../api -v ../web           # mount several, start in the last one
+sndbx claude -v ../api -v ../web -w api    # mount several, start in api
+sndbx claude -p 3000 -p 8080:80            # publish ports, 3000 means 3000:3000
+sndbx --list                               # print configured image names
+sndbx --version
 ```
