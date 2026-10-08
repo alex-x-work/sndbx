@@ -9,7 +9,11 @@ Docker images for running coding agents in a sandbox, plus `sndbx`, a small wrap
 | `codex`    | `images/codex/`    | `~/.codex`     | `/home/ubuntu/.codex`           |
 | `dsh`      | `images/dsh/`      | `~/.dsh`       | `/home/ubuntu/.dsh` (port 3080) |
 
+The host paths are the ones the `docker run` examples below mount. `sndbx` mounts `~/.config/sndbx/<name>` unless an image sets `config_dir`.
+
 All of them are built `FROM sndbx:base`, the base image in `images/base/` (Ubuntu with node, ruby and python via mise, postgres and Playwright dependencies).
+
+The `dsh` image patches out dsh's refusal to listen on `0.0.0.0`, the check upstream added because it "would expose remote code execution to the network". The server has to listen on all interfaces inside the container for a published port to reach it, so publish the port on `127.0.0.1` only, as the examples below do. A plain `-p 3080:3080` lets anyone on your network control the agent.
 
 ## Build
 
@@ -46,7 +50,7 @@ docker run --rm -it \
   sndbx:codex
 
 docker run --rm -it \
-  -p 3080:3080 \
+  -p 127.0.0.1:3080:3080 \
   -v ".:/workspace" \
   -v "$HOME/.dsh:/home/ubuntu/.dsh" \
   sndbx:dsh
@@ -87,7 +91,7 @@ images:
     user: ubuntu
   - name: dsh
     user: ubuntu
-    ports: ["3080"] # optional, always published; quote them, YAML reads 8080:22 as a number
+    ports: ["127.0.0.1:3080:3080"] # optional, always published; quote them, YAML reads 8080:22 as a number
 ```
 
 ### Use
