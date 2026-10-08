@@ -11,6 +11,8 @@ Docker images for running coding agents in a sandbox, plus `sndbx`, a small wrap
 
 The host paths are the ones the `docker run` examples below mount. `sndbx` mounts `~/.config/sndbx/<name>` unless an image sets `config_dir`.
 
+`images/opencode/opencode/config.json` is an example opencode config that uses Ollama running on the host. The image doesn't include it, so copy it into opencode's config directory on the host to use it. The examples below pass `--add-host=host.docker.internal:host-gateway` so the container can reach the host on Linux too, where Ollama must also listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
+
 All of them are built `FROM sndbx:base`, the base image in `images/base/` (Ubuntu with node, ruby and python via mise, postgres and Playwright dependencies).
 
 The `dsh` image patches out dsh's refusal to listen on `0.0.0.0`, the check upstream added because it "would expose remote code execution to the network". The server has to listen on all interfaces inside the container for a published port to reach it, so publish the port on `127.0.0.1` only, as the examples below do. A plain `-p 3080:3080` lets anyone on your network control the agent.
@@ -40,6 +42,7 @@ docker run --rm -it \
   sndbx:claude
 
 docker run --rm -it \
+  --add-host=host.docker.internal:host-gateway \
   -v ".:/workspace" \
   -v "$HOME/.opencode:/home/ubuntu/.config/opencode" \
   sndbx:opencode
@@ -84,9 +87,11 @@ images:
     user: ubuntu
     config_dir: ~/.claude # optional, defaults to ~/.config/sndbx/<name>
     config_target: .claude # optional, relative to the user's home, defaults to .<name>
+    docker_args: ["--memory=8g"] # optional, extra docker run arguments
   - name: opencode
     user: ubuntu
     config_target: .config/opencode
+    docker_args: ["--add-host=host.docker.internal:host-gateway"]
   - name: codex
     user: ubuntu
   - name: dsh

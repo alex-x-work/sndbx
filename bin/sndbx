@@ -4,7 +4,7 @@ require 'fileutils'
 require 'optparse'
 require 'yaml'
 
-VERSION = '0.5.3'.freeze
+VERSION = '0.6.0'.freeze
 
 class SndbxCliParser
   def call
@@ -68,6 +68,7 @@ class Settings
         config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
         config_target: .claude # optional, relative to the user's home, defaults to .<name>
         ports: ['3000'] # optional, always published; quote them, YAML reads 8080:22 as a number
+        docker_args: ['--memory=8g'] # optional, extra docker run arguments
   YAML
 
   def image(name)
@@ -83,13 +84,17 @@ class Settings
       abort("Error: image '#{name}' has an unquoted port in #{PATH}, YAML read it as #{port.inspect}; quote it, e.g. \"3000\".")
     end
 
+    docker_args = Array(image['docker_args'])
+    abort("Error: image '#{name}' has docker_args that aren't strings in #{PATH}.") unless docker_args.all?(String)
+
     {
       name: name,
       tag: image['alias'] || "sndbx:#{name}",
       user: image['user'],
       config_dir: File.expand_path(image['config_dir'] || File.join(DIR, name)),
       config_target: File.join(HOME_ROOT, image['user'], image['config_target'] || ".#{name}"),
-      ports: ports
+      ports: ports,
+      docker_args: docker_args
     }
   end
 
@@ -153,7 +158,7 @@ class Sandbox
     check_workdir
     FileUtils.mkdir_p(@image[:config_dir])
 
-    exec(DOCKER, *RUN_OPTIONS, "--workdir=#{mount_target(@workdir)}", *volume_args, *port_args, @image[:tag])
+    exec(DOCKER, *RUN_OPTIONS, "--workdir=#{mount_target(@workdir)}", *volume_args, *port_args, *@image[:docker_args], @image[:tag])
   end
 
   private
