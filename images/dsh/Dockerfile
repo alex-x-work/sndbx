@@ -1,4 +1,4 @@
-FROM ubuntu-build:latest
+FROM sbx:base
 
 RUN git clone https://github.com/deepseek-ai/deepseek-harness ~/dsh
 

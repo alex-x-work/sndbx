@@ -1,4 +1,4 @@
-FROM ubuntu-build:latest
+FROM sbx:base
 
 RUN curl -fsSL https://claude.ai/install.sh | bash
 

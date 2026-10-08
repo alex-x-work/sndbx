@@ -2,25 +2,27 @@
 
 Docker images for running coding agents in a sandbox, plus `sbx`, a small wrapper around `docker run`.
 
-| Image      | Directory             | Config on host | Config in container             |
-| ---------- | --------------------- | -------------- | ------------------------------- |
-| `claude`   | `images/claude/`      | `~/.claude`    | `/home/ubuntu/.claude`          |
-| `opencode` | `images/opencode/`    | `~/.opencode`  | `/home/ubuntu/.config/opencode` |
-| `dsh`      | `images/dsh/`         | `~/.dsh`       | `/home/ubuntu/.dsh` (port 3080) |
+| Image      | Directory          | Config on host | Config in container             |
+| ---------- | ------------------ | -------------- | ------------------------------- |
+| `claude`   | `images/claude/`   | `~/.claude`    | `/home/ubuntu/.claude`          |
+| `opencode` | `images/opencode/` | `~/.opencode`  | `/home/ubuntu/.config/opencode` |
+| `dsh`      | `images/dsh/`      | `~/.dsh`       | `/home/ubuntu/.dsh` (port 3080) |
 
-All three are built `FROM ubuntu-build:latest`, the base image in `images/base/` (Ubuntu with node, ruby and python via mise, postgres and Playwright dependencies).
+All three are built `FROM sbx:base`, the base image in `images/base/` (Ubuntu with node, ruby and python via mise, postgres and Playwright dependencies).
 
 ## Build
 
-Build the base image first, then the others:
+`bin/build IMAGE` builds `images/IMAGE/`, always with `--no-cache`. The base image is tagged `sbx:base`, every other image is tagged with its directory name.
 
 ```sh
-docker build --no-cache -t ubuntu-build:latest ./images/base
-
-docker build -t claude ./images/claude
-docker build -t opencode ./images/opencode
-docker build -t dsh ./images/dsh
+bin/build claude    # build/rebuild claude, and sbx:base first if it doesn't exist yet
+bin/build base      # build/rebuild sbx:base
+bin/build --all     # build/rebuild sbx:base, then every other image
 ```
+
+`bin/build claude` won't rebuild an existing `sbx:base`. To pick up base changes, run `bin/build base` before it.
+
+To add an image, create `images/<name>/Dockerfile` starting with `FROM sbx:base`.
 
 ## Run with docker
 

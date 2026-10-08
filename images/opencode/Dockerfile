@@ -1,4 +1,4 @@
-FROM ubuntu-build:latest
+FROM sbx:base
 
 RUN mkdir -p ~/.config ~/.local/share
 RUN curl -fsSL https://opencode.ai/install | bash
