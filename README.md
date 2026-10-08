@@ -85,7 +85,7 @@ images:
   - name: claude
     alias: my-claude:latest # optional, defaults to sndbx:<name>
     user: ubuntu
-    config_dir: ~/.claude # optional, defaults to ~/.config/sndbx/<name>
+    # config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
     config_target: .claude # optional, relative to the user's home, defaults to .<name>
     docker_args: ["--memory=8g"] # optional, extra docker run arguments
   - name: opencode
