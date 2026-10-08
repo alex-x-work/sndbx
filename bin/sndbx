@@ -4,7 +4,7 @@ require 'fileutils'
 require 'optparse'
 require 'yaml'
 
-VERSION = '0.5.0'.freeze
+VERSION = '0.5.1'.freeze
 
 class SndbxCliParser
   def call
@@ -93,7 +93,20 @@ class Settings
   private
 
   def images
-    @images ||= Array(load['images'])
+    @images ||= validate(load)
+  end
+
+  def validate(settings)
+    abort("Error: invalid #{PATH}: expected a mapping with an images list.") unless settings.is_a?(Hash)
+
+    images = settings['images'] || []
+    abort("Error: invalid #{PATH}: images must be a list.") unless images.is_a?(Array)
+
+    images.each.with_index(1) do |entry, number|
+      next if entry.is_a?(Hash) && entry['name'].is_a?(String)
+
+      abort("Error: invalid #{PATH}: image #{number} must be a mapping with a name.")
+    end
   end
 
   def load
