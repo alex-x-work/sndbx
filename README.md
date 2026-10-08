@@ -12,10 +12,10 @@ All three are built `FROM sndbx:base`, the base image in `images/base/` (Ubuntu 
 
 ## Build
 
-`bin/build IMAGE` builds `images/IMAGE/`, always with `--no-cache`. The base image is tagged `sndbx:base`, every other image is tagged with its directory name.
+`bin/build IMAGE` builds `images/IMAGE/`, always with `--no-cache`. Every image is tagged `sndbx:<directory name>`, e.g. `sndbx:base`, `sndbx:claude`.
 
 ```sh
-bin/build claude    # build/rebuild claude, and sndbx:base first if it doesn't exist yet
+bin/build claude    # build/rebuild sndbx:claude, and sndbx:base first if it doesn't exist yet
 bin/build base      # build/rebuild sndbx:base
 bin/build --all     # build/rebuild sndbx:base, then every other image
 ```
@@ -32,18 +32,18 @@ Each command mounts the current directory at `/workspace` and the image's config
 docker run --rm -it \
   -v ".:/workspace" \
   -v "$HOME/.claude:/home/ubuntu/.claude" \
-  claude
+  sndbx:claude
 
 docker run --rm -it \
   -v ".:/workspace" \
   -v "$HOME/.opencode:/home/ubuntu/.config/opencode" \
-  opencode
+  sndbx:opencode
 
 docker run --rm -it \
   -p 3080:3080 \
   -v ".:/workspace" \
   -v "$HOME/.dsh:/home/ubuntu/.dsh" \
-  dsh
+  sndbx:dsh
 ```
 
 ## Run with sndbx
@@ -70,7 +70,7 @@ Images are listed in `~/.config/sndbx/settings.yml`. The first run creates an ex
 ```yaml
 images:
   - name: claude
-    alias: claude:latest # optional, defaults to name
+    alias: my-claude:latest # optional, defaults to sndbx:<name>
     user: ubuntu
     config_dir: ~/.claude # optional, defaults to ~/.config/sndbx/<name>
     config_target: .claude # optional, relative to the user's home, defaults to .<name>

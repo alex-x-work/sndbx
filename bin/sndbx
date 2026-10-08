@@ -4,7 +4,7 @@ require 'fileutils'
 require 'optparse'
 require 'yaml'
 
-VERSION = '0.4.0'.freeze
+VERSION = '0.5.0'.freeze
 
 class SndbxCliParser
   def call
@@ -63,7 +63,7 @@ class Settings
   EXAMPLE = <<~YAML.freeze
     images:
       - name: claude
-        alias: claude:latest # optional, defaults to name
+        alias: my-claude:latest # optional, defaults to sndbx:<name>
         user: ubuntu
         config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
         config_target: .claude # optional, relative to the user's home, defaults to .<name>
@@ -78,7 +78,7 @@ class Settings
 
     {
       name: name,
-      tag: image['alias'] || name,
+      tag: image['alias'] || "sndbx:#{name}",
       user: image['user'],
       config_dir: File.expand_path(image['config_dir'] || File.join(DIR, name)),
       config_target: File.join(HOME_ROOT, image['user'], image['config_target'] || ".#{name}"),

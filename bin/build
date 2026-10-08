@@ -5,8 +5,9 @@
 set -euo pipefail
 
 IMAGES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../images" && pwd)"
+TAG_PREFIX=sndbx
 BASE_NAME=base
-BASE_TAG=sndbx:base
+BASE_TAG="$TAG_PREFIX:$BASE_NAME"
 
 fail() {
   echo "Error: $*" >&2
@@ -33,7 +34,7 @@ usage() {
 }
 
 tag_for() {
-  if [[ "$1" == "$BASE_NAME" ]]; then echo "$BASE_TAG"; else echo "$1"; fi
+  echo "$TAG_PREFIX:$1"
 }
 
 needs_base() {
