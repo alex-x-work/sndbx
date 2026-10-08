@@ -4,7 +4,7 @@ require 'fileutils'
 require 'optparse'
 require 'yaml'
 
-VERSION = '0.5.1'.freeze
+VERSION = '0.5.2'.freeze
 
 class SndbxCliParser
   def call
@@ -76,13 +76,20 @@ class Settings
 
     abort("Error: image '#{name}' has no user in #{PATH}.") unless image['user']
 
+    ports = Array(image['ports'])
+    ports.each do |port|
+      next if port.is_a?(String)
+
+      abort("Error: image '#{name}' has an unquoted port in #{PATH}, YAML read it as #{port.inspect}; quote it, e.g. \"3000\".")
+    end
+
     {
       name: name,
       tag: image['alias'] || "sndbx:#{name}",
       user: image['user'],
       config_dir: File.expand_path(image['config_dir'] || File.join(DIR, name)),
       config_target: File.join(HOME_ROOT, image['user'], image['config_target'] || ".#{name}"),
-      ports: Array(image['ports']).map(&:to_s)
+      ports: ports
     }
   end
 
