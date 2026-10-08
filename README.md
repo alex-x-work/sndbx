@@ -4,7 +4,7 @@ Docker images for running coding agents in a sandbox, plus `sbx`, a small wrappe
 
 | Image      | Directory             | Config on host | Config in container             |
 | ---------- | --------------------- | -------------- | ------------------------------- |
-| `claude`   | `images/claude-code/` | `~/.claude`    | `/home/ubuntu/.claude`          |
+| `claude`   | `images/claude/`      | `~/.claude`    | `/home/ubuntu/.claude`          |
 | `opencode` | `images/opencode/`    | `~/.opencode`  | `/home/ubuntu/.config/opencode` |
 | `dsh`      | `images/dsh/`         | `~/.dsh`       | `/home/ubuntu/.dsh` (port 3080) |
 
@@ -17,7 +17,7 @@ Build the base image first, then the others:
 ```sh
 docker build --no-cache -t ubuntu-build:latest ./images/base
 
-docker build -t claude ./images/claude-code
+docker build -t claude ./images/claude
 docker build -t opencode ./images/opencode
 docker build -t dsh ./images/dsh
 ```
