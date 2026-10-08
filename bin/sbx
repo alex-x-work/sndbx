@@ -1,0 +1,200 @@
+#!/usr/bin/env ruby
+
+require 'fileutils'
+require 'optparse'
+require 'yaml'
+
+VERSION = '0.3.1'.freeze
+
+class SbxCliParser
+  def call
+    volumes = []
+    ports = []
+    workdir = nil
+
+    OptionParser.new do |opts|
+      opts.banner = 'Usage: sbx image [options]'
+      opts.separator ''
+      opts.separator "Runs a sandboxed image from #{Settings::PATH}."
+      opts.separator 'Mounts the current directory unless volumes are given.'
+      opts.separator ''
+
+      opts.on('-v', '--volume=DIR', "Mount a directory as #{Sandbox::MOUNT_ROOT}/<basename>, repeatable") do |dir|
+        volumes.push(dir)
+      end
+
+      opts.on('-w', '--workdir=NAME', "Start in #{Sandbox::MOUNT_ROOT}/<NAME>, the last volume by default") do |name|
+        workdir = name
+      end
+
+      opts.on('-p', '--publish=PORT', 'Publish a port as HOST:CONTAINER, PORT means PORT:PORT, repeatable') do |port|
+        ports.push(port)
+      end
+
+      opts.on('-l', '--list', 'Print image names') do
+        puts Settings.new.image_names if File.exist?(Settings::PATH)
+        exit(0)
+      end
+
+      opts.on('-V', '--version', 'Print version') do
+        puts "sbx #{VERSION}"
+        exit(0)
+      end
+
+      opts.on('-h', '--help', 'Print help') do
+        puts opts
+        exit(0)
+      end
+    end.parse!
+
+    abort('Error: expected exactly one image.') unless ARGV.length == 1
+
+    { image: ARGV.first, volumes: volumes, ports: ports, workdir: workdir }
+  rescue OptionParser::ParseError => e
+    abort("Error: #{e.message}.")
+  end
+end
+
+class Settings
+  DIR = File.join(Dir.home, '.config', 'sbx').freeze
+  PATH = File.join(DIR, 'settings.yml').freeze
+  HOME_ROOT = '/home'.freeze
+
+  EXAMPLE = <<~YAML.freeze
+    images:
+      - name: claude
+        alias: claude:latest # optional, defaults to name
+        user: ubuntu
+        config_dir: ~/.claude_docker # optional, defaults to ~/.config/sbx/<name>
+        config_target: .claude # optional, relative to the user's home, defaults to .<name>
+        ports: ['3000'] # optional, always published; quote them, YAML reads 8080:22 as a number
+  YAML
+
+  def image(name)
+    image = images.find { |entry| entry['name'] == name }
+    abort("Error: unknown image '#{name}', expected one of: #{image_names.join(', ')}.") unless image
+
+    abort("Error: image '#{name}' has no user in #{PATH}.") unless image['user']
+
+    {
+      name: name,
+      tag: image['alias'] || name,
+      user: image['user'],
+      config_dir: File.expand_path(image['config_dir'] || File.join(DIR, name)),
+      config_target: File.join(HOME_ROOT, image['user'], image['config_target'] || ".#{name}"),
+      ports: Array(image['ports']).map(&:to_s)
+    }
+  end
+
+  def image_names
+    images.map { |entry| entry['name'] }
+  end
+
+  private
+
+  def images
+    @images ||= Array(load['images'])
+  end
+
+  def load
+    create_example unless File.exist?(PATH)
+
+    YAML.safe_load_file(PATH) || {}
+  rescue Psych::Exception => e
+    abort("Error: invalid #{PATH}: #{e.message}.")
+  end
+
+  def create_example
+    FileUtils.mkdir_p(DIR)
+    File.write(PATH, EXAMPLE)
+
+    abort("Created an example config at #{PATH}, edit it and run again.")
+  end
+end
+
+class Sandbox
+  DOCKER = 'docker'.freeze
+  RUN_OPTIONS = ['run', '--rm', '-it'].freeze
+  MOUNT_ROOT = '/workspace'.freeze
+  PORT_FORMAT = %r{\A(?:[\d.]+:)?\d+(?::\d+)?(?:/(?:tcp|udp))?\z}.freeze
+  BARE_PORT_FORMAT = %r{\A(\d+)(/(?:tcp|udp))?\z}.freeze
+  MAX_PORT = 65_535
+  FORBIDDEN_DIRS = [Dir.home, '/'].map { |dir| File.realpath(dir) }.freeze
+
+  def initialize(image:, volumes:, ports:, workdir:)
+    @image = image
+    @mounts = mounts(volumes.empty? ? [Dir.pwd] : volumes)
+    @ports = (image[:ports] + ports).map { |port| normalize_port(port) }.uniq
+    @workdir = workdir || @mounts.keys.last
+  end
+
+  def call
+    check_docker
+    check_workdir
+    FileUtils.mkdir_p(@image[:config_dir])
+
+    exec(DOCKER, *RUN_OPTIONS, "--workdir=#{mount_target(@workdir)}", *volume_args, *port_args, @image[:tag])
+  end
+
+  private
+
+  def mounts(volumes)
+    volumes.each_with_object({}) do |volume, mounts|
+      path = File.expand_path(volume)
+      name = File.basename(path)
+
+      abort("Error: #{path} is not a directory.") unless File.directory?(path)
+      abort("Error: refusing to mount #{path}.") if FORBIDDEN_DIRS.include?(File.realpath(path))
+      abort("Error: more than one volume is named '#{name}'.") if mounts.key?(name)
+
+      mounts[name] = path
+    end
+  end
+
+  def volume_args
+    @mounts
+      .map { |name, path| "#{path}:#{mount_target(name)}" }
+      .push("#{@image[:config_dir]}:#{@image[:config_target]}")
+      .flat_map { |volume| ['-v', volume] }
+  end
+
+  def normalize_port(port)
+    abort("Error: invalid port '#{port}', expected PORT or HOST:CONTAINER.") unless port.match?(PORT_FORMAT)
+    abort("Error: invalid port '#{port}', ports go up to #{MAX_PORT}.") if port_numbers(port).any? { |number| number > MAX_PORT }
+
+    port.sub(BARE_PORT_FORMAT, '\\1:\\1\\2')
+  end
+
+  def port_numbers(port)
+    port.sub(%r{/.*\z}, '').split(':').last(2).map(&:to_i)
+  end
+
+  def port_args
+    @ports.flat_map { |port| ['-p', port] }
+  end
+
+  def mount_target(name)
+    File.join(MOUNT_ROOT, name)
+  end
+
+  def check_docker
+    abort('Error: docker is not installed.') unless quiet_system(DOCKER, '--version')
+    abort('Error: docker is not running.') unless quiet_system(DOCKER, 'info')
+    abort("Error: docker image '#{@image[:tag]}' does not exist.") unless quiet_system(DOCKER, 'image', 'inspect', @image[:tag])
+  end
+
+  def check_workdir
+    return if @mounts.key?(@workdir)
+
+    abort("Error: workdir '#{@workdir}' is not a volume, expected one of: #{@mounts.keys.join(', ')}.")
+  end
+
+  def quiet_system(*command)
+    system(*command, out: File::NULL, err: File::NULL)
+  end
+end
+
+ARGV << '-h' if ARGV.empty?
+options = SbxCliParser.new.call
+
+Sandbox.new(**options.merge(image: Settings.new.image(options[:image]))).call
