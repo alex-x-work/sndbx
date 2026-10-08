@@ -6,9 +6,10 @@ Docker images for running coding agents in a sandbox, plus `sndbx`, a small wrap
 | ---------- | ------------------ | -------------- | ------------------------------- |
 | `claude`   | `images/claude/`   | `~/.claude`    | `/home/ubuntu/.claude`          |
 | `opencode` | `images/opencode/` | `~/.opencode`  | `/home/ubuntu/.config/opencode` |
+| `codex`    | `images/codex/`    | `~/.codex`     | `/home/ubuntu/.codex`           |
 | `dsh`      | `images/dsh/`      | `~/.dsh`       | `/home/ubuntu/.dsh` (port 3080) |
 
-All three are built `FROM sndbx:base`, the base image in `images/base/` (Ubuntu with node, ruby and python via mise, postgres and Playwright dependencies).
+All of them are built `FROM sndbx:base`, the base image in `images/base/` (Ubuntu with node, ruby and python via mise, postgres and Playwright dependencies).
 
 ## Build
 
@@ -38,6 +39,11 @@ docker run --rm -it \
   -v ".:/workspace" \
   -v "$HOME/.opencode:/home/ubuntu/.config/opencode" \
   sndbx:opencode
+
+docker run --rm -it \
+  -v ".:/workspace" \
+  -v "$HOME/.codex:/home/ubuntu/.codex" \
+  sndbx:codex
 
 docker run --rm -it \
   -p 3080:3080 \
@@ -76,11 +82,11 @@ images:
     config_target: .claude # optional, relative to the user's home, defaults to .<name>
   - name: opencode
     user: ubuntu
-    config_dir: ~/.opencode
     config_target: .config/opencode
+  - name: codex
+    user: ubuntu
   - name: dsh
     user: ubuntu
-    config_dir: ~/.dsh
     ports: ["3080"] # optional, always published; quote them, YAML reads 8080:22 as a number
 ```
 
