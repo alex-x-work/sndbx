@@ -97,7 +97,7 @@ images:
   - name: opencode
     user: ubuntu
     config_target: .config/opencode
-    docker_args: ["--add-host=host.docker.internal:host-gateway"]
+    docker_args: ["--add-host=host.docker.internal:host-gateway"] # optional, lets the container reach Ollama on the host on Linux
   - name: codex
     user: ubuntu
   - name: dsh
