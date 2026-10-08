@@ -1,4 +1,5 @@
-FROM sndbx:base
+ARG TAG_PREFIX=sndbx
+FROM ${TAG_PREFIX}:base
 
 RUN curl -fsSL https://claude.ai/install.sh | bash
 

@@ -3,7 +3,7 @@
 _sndbx() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
-  local options='-v --volume -w --workdir -p --publish -l --list -V --version -h --help'
+  local options='-v --volume -w --workdir -p --publish -l --list --tag-prefix -V --version -h --help'
   local has_image=0 i
 
   # Bash splits --volume=DIR into "--volume" "=" "DIR"

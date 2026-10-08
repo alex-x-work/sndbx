@@ -13,13 +13,13 @@ The host paths are the ones the `docker run` examples below mount. `sndbx` mount
 
 `images/opencode/opencode/config.json` is an example opencode config that uses Ollama running on the host. The image doesn't include it, so copy it into opencode's config directory on the host to use it. The examples below pass `--add-host=host.docker.internal:host-gateway` so the container can reach the host on Linux too, where Ollama must also listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
 
-All of them are built `FROM sndbx:base`, the base image in `images/base/` (Ubuntu with node, ruby and python via mise, postgres and Playwright dependencies).
+All of them are built on `<tag_prefix>:base` (`sndbx:base` by default), the base image in `images/base/` (Ubuntu with node, ruby and python via mise, postgres and Playwright dependencies).
 
 The `dsh` image patches out dsh's refusal to listen on `0.0.0.0`, the check upstream added because it "would expose remote code execution to the network". The server has to listen on all interfaces inside the container for a published port to reach it, so publish the port on `127.0.0.1` only, as the examples below do. A plain `-p 3080:3080` lets anyone on your network control the agent.
 
 ## Build
 
-`bin/build IMAGE` builds `images/IMAGE/`, always with `--no-cache`. Every image is tagged `sndbx:<directory name>`, e.g. `sndbx:base`, `sndbx:claude`.
+`bin/build IMAGE` builds `images/IMAGE/`, always with `--no-cache`. Every image is tagged `<tag_prefix>:<directory name>`, e.g. `sndbx:base`, `sndbx:claude`. The prefix is `sndbx` unless `tag_prefix` is set in the [settings](#configure); `bin/build` reads it with `sndbx --tag-prefix`, so it needs `bin/sndbx` and Ruby.
 
 ```sh
 bin/build claude    # build/rebuild sndbx:claude, and sndbx:base first if it doesn't exist yet
@@ -29,7 +29,12 @@ bin/build --all     # build/rebuild sndbx:base, then every other image
 
 `bin/build claude` won't rebuild an existing `sndbx:base`. To pick up base changes, run `bin/build base` before it.
 
-To add an image, create `images/<name>/Dockerfile` starting with `FROM sndbx:base`.
+To add an image, create `images/<name>/Dockerfile` starting with:
+
+```dockerfile
+ARG TAG_PREFIX=sndbx
+FROM ${TAG_PREFIX}:base
+```
 
 ## Run with docker
 
@@ -81,9 +86,10 @@ source /path/to/sndbx/completions/_sndbx
 Images are listed in `~/.config/sndbx/settings.yml`. The first run creates an example to edit.
 
 ```yaml
+tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
 images:
   - name: claude
-    alias: my-claude:latest # optional, defaults to sndbx:<name>
+    alias: my-claude:latest # optional, defaults to <tag_prefix>:<name>
     user: ubuntu
     # config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
     config_target: .claude # optional, relative to the user's home, defaults to .<name>
@@ -107,5 +113,6 @@ sndbx claude -v ../api -v ../web           # mount several, start in the last on
 sndbx claude -v ../api -v ../web -w api    # mount several, start in api
 sndbx claude -p 3000 -p 8080:80            # publish ports, 3000 means 3000:3000
 sndbx --list                               # print configured image names
+sndbx --tag-prefix                         # print the image tag prefix
 sndbx --version
 ```

@@ -1,4 +1,5 @@
-FROM sndbx:base
+ARG TAG_PREFIX=sndbx
+FROM ${TAG_PREFIX}:base
 
 RUN git clone --depth 1 https://github.com/deepseek-ai/deepseek-harness ~/dsh
 

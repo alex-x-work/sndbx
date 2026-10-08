@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Build an image from images/<name>/, always without the docker cache.
-# An image built FROM sndbx:base gets the base image built first, but only if it doesn't exist yet.
+# Images are tagged <prefix>:<name>, with the prefix from `sndbx --tag-prefix`.
+# An image built FROM ${TAG_PREFIX}:base gets the base image built first, but only if it doesn't exist yet.
 
 set -euo pipefail
 
-IMAGES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../images" && pwd)"
-TAG_PREFIX=sndbx
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGES_DIR="$(cd "$BIN_DIR/../images" && pwd)"
 BASE_NAME=base
-BASE_TAG="$TAG_PREFIX:$BASE_NAME"
+TAG_PREFIX=
 
 fail() {
   echo "Error: $*" >&2
@@ -38,24 +39,27 @@ tag_for() {
 }
 
 needs_base() {
-  grep -qE "^FROM[[:space:]]+$BASE_TAG([[:space:]]|$)" "$IMAGES_DIR/$1/Dockerfile"
+  grep -qE '^FROM[[:space:]]+\$\{TAG_PREFIX\}:'"$BASE_NAME"'([[:space:]]|$)' "$IMAGES_DIR/$1/Dockerfile"
 }
 
 base_exists() {
-  docker image inspect "$BASE_TAG" > /dev/null 2>&1
+  docker image inspect "$(tag_for "$BASE_NAME")" > /dev/null 2>&1
 }
 
 build() {
-  local tag
+  local tag args=()
   tag="$(tag_for "$1")"
 
+  # Only images FROM ${TAG_PREFIX}:base declare the arg, docker warns about unused ones.
+  if needs_base "$1"; then args=(--build-arg "TAG_PREFIX=$TAG_PREFIX"); fi
+
   echo "==> Building $tag from images/$1"
-  docker build --no-cache -t "$tag" "$IMAGES_DIR/$1" || fail "failed to build $tag."
+  docker build --no-cache "${args[@]}" -t "$tag" "$IMAGES_DIR/$1" || fail "failed to build $tag."
 }
 
 build_with_base() {
   if [[ "$1" != "$BASE_NAME" ]] && needs_base "$1" && ! base_exists; then
-    echo "==> $BASE_TAG doesn't exist yet"
+    echo "==> $(tag_for "$BASE_NAME") doesn't exist yet"
     build "$BASE_NAME"
   fi
 
@@ -88,6 +92,8 @@ main() {
         fail "unknown image '$1', expected one of: $(echo "$names" | paste -sd ' ' -)."
       ;;
   esac
+
+  TAG_PREFIX="$("$BIN_DIR/sndbx" --tag-prefix)" || fail "cannot read the tag prefix from sndbx."
 
   command -v docker > /dev/null || fail "docker is not installed."
   docker info > /dev/null 2>&1 || fail "cannot reach the docker daemon, is it running?"

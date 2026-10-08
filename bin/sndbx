@@ -4,7 +4,7 @@ require 'fileutils'
 require 'optparse'
 require 'yaml'
 
-VERSION = '0.6.1'.freeze
+VERSION = '0.7.0'.freeze
 
 class SndbxCliParser
   def call
@@ -36,6 +36,11 @@ class SndbxCliParser
         exit(0)
       end
 
+      opts.on('--tag-prefix', 'Print the image tag prefix') do
+        puts Settings.new.tag_prefix
+        exit(0)
+      end
+
       opts.on('-V', '--version', 'Print version') do
         puts "sndbx #{VERSION}"
         exit(0)
@@ -59,12 +64,15 @@ class Settings
   DIR = File.join(Dir.home, '.config', 'sndbx').freeze
   PATH = File.join(DIR, 'settings.yml').freeze
   HOME_ROOT = '/home'.freeze
+  DEFAULT_TAG_PREFIX = 'sndbx'.freeze
+  TAG_PREFIX_FORMAT = %r{\A[a-z0-9]+(?:[._/-][a-z0-9]+)*\z}.freeze
 
   EXAMPLE = <<~YAML.freeze
+    # tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
     images:
       - name: claude
         user: ubuntu
-        # alias: my-claude:latest # optional, defaults to sndbx:<name>
+        # alias: my-claude:latest # optional, defaults to <tag_prefix>:<name>
         # config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
         # config_target: .claude # optional, relative to the user's home, defaults to .<name>
         # ports: ['3000'] # optional, always published; quote them, YAML reads 8080:22 as a number
@@ -89,7 +97,7 @@ class Settings
 
     {
       name: name,
-      tag: image['alias'] || "sndbx:#{name}",
+      tag: image['alias'] || "#{tag_prefix}:#{name}",
       user: image['user'],
       config_dir: File.expand_path(image['config_dir'] || File.join(DIR, name)),
       config_target: File.join(HOME_ROOT, image['user'], image['config_target'] || ".#{name}"),
@@ -102,14 +110,29 @@ class Settings
     images.map { |entry| entry['name'] }
   end
 
+  def tag_prefix
+    return DEFAULT_TAG_PREFIX unless File.exist?(PATH)
+
+    settings['tag_prefix'] || DEFAULT_TAG_PREFIX
+  end
+
   private
 
   def images
-    @images ||= validate(load)
+    settings['images'] || []
+  end
+
+  def settings
+    @settings ||= validate(load)
   end
 
   def validate(settings)
     abort("Error: invalid #{PATH}: expected a mapping with an images list.") unless settings.is_a?(Hash)
+
+    prefix = settings['tag_prefix']
+    unless prefix.nil? || (prefix.is_a?(String) && prefix.match?(TAG_PREFIX_FORMAT))
+      abort("Error: invalid #{PATH}: tag_prefix must be a lowercase image name, e.g. sndbx.")
+    end
 
     images = settings['images'] || []
     abort("Error: invalid #{PATH}: images must be a list.") unless images.is_a?(Array)
@@ -119,6 +142,8 @@ class Settings
 
       abort("Error: invalid #{PATH}: image #{number} must be a mapping with a name.")
     end
+
+    settings
   end
 
   def load
