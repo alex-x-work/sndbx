@@ -5,7 +5,7 @@ ARG NODE_VERSION=26.9.0
 ARG RUBY_VERSION=4.0.7
 ARG PYTHON_VERSION=3.14.7
 
-SHELL ["/bin/bash", "-c"]
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -20,7 +20,7 @@ RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
 USER ${USER}
 ENV HOME=/home/${USER}
 
-RUN curl https://mise.run | bash
+RUN curl -fsSL https://mise.run | bash
 
 RUN eval "$(~/.local/bin/mise activate bash)" \
   && mise use --global \
