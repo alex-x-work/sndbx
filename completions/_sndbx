@@ -29,16 +29,16 @@ _sndbx() {
   case "${prev}" in
     -v|--volume)
       compopt -o filenames
-      COMPREPLY=( $(compgen -d -- "${cur}") )
+      mapfile -t COMPREPLY < <(compgen -d -- "${cur}")
       ;;
     -w|--workdir|-p|--publish)
       COMPREPLY=()
       ;;
     *)
       if [[ "${cur}" == -* ]]; then
-        COMPREPLY=( $(compgen -W "${options}" -- "${cur}") )
+        mapfile -t COMPREPLY < <(compgen -W "${options}" -- "${cur}")
       elif (( ! has_image )); then
-        COMPREPLY=( $(compgen -W "$(sndbx --list 2>/dev/null)" -- "${cur}") )
+        mapfile -t COMPREPLY < <(compgen -W "$(sndbx --list 2>/dev/null)" -- "${cur}")
       else
         COMPREPLY=()
       fi
