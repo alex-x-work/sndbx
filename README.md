@@ -116,3 +116,7 @@ docker run --rm -it \
   -v "$HOME/.dsh:/home/ubuntu/.dsh" \
   sndbx:dsh
 ```
+
+## License
+
+[MIT](LICENSE)
