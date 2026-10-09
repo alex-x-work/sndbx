@@ -61,7 +61,7 @@ Images are listed in `~/.config/sndbx/settings.yml`. The first run creates an ex
 tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
 images:
   - name: claude
-    alias: my-claude:latest # optional, defaults to <tag_prefix>:<name>
+    tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
     user: ubuntu
     # config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
     config_target: .claude # optional, relative to the user's home, defaults to .<name>
