@@ -36,37 +36,9 @@ ARG TAG_PREFIX=sndbx
 FROM ${TAG_PREFIX}:base
 ```
 
-## Run with docker
-
-Each command mounts the current directory at `/workspace` and the image's config directory from the table above.
-
-```sh
-docker run --rm -it \
-  -v ".:/workspace" \
-  -v "$HOME/.claude:/home/ubuntu/.claude" \
-  sndbx:claude
-
-docker run --rm -it \
-  --add-host=host.docker.internal:host-gateway \
-  -v ".:/workspace" \
-  -v "$HOME/.opencode:/home/ubuntu/.config/opencode" \
-  sndbx:opencode
-
-docker run --rm -it \
-  -v ".:/workspace" \
-  -v "$HOME/.codex:/home/ubuntu/.codex" \
-  sndbx:codex
-
-docker run --rm -it \
-  -p 127.0.0.1:3080:3080 \
-  -v ".:/workspace" \
-  -v "$HOME/.dsh:/home/ubuntu/.dsh" \
-  sndbx:dsh
-```
-
 ## Run with sndbx
 
-`sndbx` does the same with less typing. It:
+`sndbx` wraps the `docker run` commands below with less typing. It:
 
 - mounts the current directory, or each `-v DIR`, at `/workspace/<basename>`
 - mounts the image's config directory at `/home/<user>/<config_target>`
@@ -115,4 +87,32 @@ sndbx claude -p 3000 -p 8080:80            # publish ports, 3000 means 3000:3000
 sndbx --list                               # print configured image names
 sndbx --tag-prefix                         # print the image tag prefix
 sndbx --version
+```
+
+## Run with docker
+
+Each command mounts the current directory at `/workspace` and the image's config directory from the table above.
+
+```sh
+docker run --rm -it \
+  -v ".:/workspace" \
+  -v "$HOME/.claude:/home/ubuntu/.claude" \
+  sndbx:claude
+
+docker run --rm -it \
+  --add-host=host.docker.internal:host-gateway \
+  -v ".:/workspace" \
+  -v "$HOME/.opencode:/home/ubuntu/.config/opencode" \
+  sndbx:opencode
+
+docker run --rm -it \
+  -v ".:/workspace" \
+  -v "$HOME/.codex:/home/ubuntu/.codex" \
+  sndbx:codex
+
+docker run --rm -it \
+  -p 127.0.0.1:3080:3080 \
+  -v ".:/workspace" \
+  -v "$HOME/.dsh:/home/ubuntu/.dsh" \
+  sndbx:dsh
 ```
