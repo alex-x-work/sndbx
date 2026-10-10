@@ -4,7 +4,8 @@ _sndbx() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
   local options='-v --volume -w --workdir -p --publish -l --list --tag-prefix -V --version -h --help'
-  local has_image=0 i
+  local has_image=0 i dir
+  local -a workdirs=()
 
   # Bash splits --volume=DIR into "--volume" "=" "DIR"
   if [[ "${cur}" == "=" ]]; then
@@ -14,10 +15,16 @@ _sndbx() {
     prev="${COMP_WORDS[COMP_CWORD-2]}"
   fi
 
-  # Look for an image already given before the current word, skipping option values
+  # Look for an image and volumes given before the current word, skipping option values
   for (( i = 1; i < COMP_CWORD; i++ )); do
     case "${COMP_WORDS[i]}" in
-      -v|--volume|-w|--workdir|-p|--publish)
+      -v|--volume)
+        (( i++ ))
+        [[ "${COMP_WORDS[i]}" == "=" ]] && (( i++ ))
+        dir="${COMP_WORDS[i]/#\~/${HOME}}"
+        dir="$(cd -- "${dir}" 2>/dev/null && pwd)" && workdirs+=("${dir##*/}")
+        ;;
+      -w|--workdir|-p|--publish)
         (( i++ ))
         [[ "${COMP_WORDS[i]}" == "=" ]] && (( i++ ))
         ;;
@@ -31,7 +38,12 @@ _sndbx() {
       compopt -o filenames
       mapfile -t COMPREPLY < <(compgen -d -- "${cur}")
       ;;
-    -w|--workdir|-p|--publish)
+    -w|--workdir)
+      # Workdir names a volume by basename, the current directory when none are given
+      (( ${#workdirs[@]} )) || workdirs=("${PWD##*/}")
+      mapfile -t COMPREPLY < <(compgen -W "${workdirs[*]}" -- "${cur}")
+      ;;
+    -p|--publish)
       COMPREPLY=()
       ;;
     *)

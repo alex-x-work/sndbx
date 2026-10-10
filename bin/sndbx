@@ -4,7 +4,7 @@ require 'fileutils'
 require 'optparse'
 require 'yaml'
 
-VERSION = '0.8.0'.freeze
+VERSION = '0.9.0'.freeze
 
 class SndbxCliParser
   def call
