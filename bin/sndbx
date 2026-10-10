@@ -4,16 +4,54 @@ require 'fileutils'
 require 'optparse'
 require 'yaml'
 
-VERSION = '0.9.0'.freeze
+VERSION = '0.11.0'.freeze
 
 class SndbxCliParser
+  COMMANDS = %w[run build].freeze
+
+  def call
+    parser = OptionParser.new do |opts|
+      opts.banner = 'Usage: sndbx command [options]'
+      opts.separator ''
+      opts.separator 'Commands:'
+      opts.separator '    run IMAGE      Run a sandboxed image'
+      opts.separator '    build IMAGE    Build an image'
+      opts.separator ''
+      opts.separator "Run 'sndbx command --help' for a command's options."
+      opts.separator ''
+
+      opts.on('-V', '--version', 'Print version') do
+        puts "sndbx #{VERSION}"
+        exit(0)
+      end
+
+      opts.on('-h', '--help', 'Print help') do
+        puts opts
+        exit(0)
+      end
+    end
+
+    # Stop at the command, its options are parsed by the command's parser.
+    parser.order!
+    command = ARGV.shift
+
+    abort(parser.help) unless command
+    abort("Error: unknown command '#{command}', expected one of: #{COMMANDS.join(', ')}.") unless COMMANDS.include?(command)
+
+    command
+  rescue OptionParser::ParseError => e
+    abort("Error: #{e.message}.")
+  end
+end
+
+class RunCliParser
   def call
     volumes = []
     ports = []
     workdir = nil
 
     OptionParser.new do |opts|
-      opts.banner = 'Usage: sndbx image [options]'
+      opts.banner = 'Usage: sndbx run IMAGE [options]'
       opts.separator ''
       opts.separator "Runs a sandboxed image from #{Settings::PATH}."
       opts.separator 'Mounts the current directory unless volumes are given.'
@@ -36,16 +74,6 @@ class SndbxCliParser
         exit(0)
       end
 
-      opts.on('--tag-prefix', 'Print the image tag prefix') do
-        puts Settings.new.tag_prefix
-        exit(0)
-      end
-
-      opts.on('-V', '--version', 'Print version') do
-        puts "sndbx #{VERSION}"
-        exit(0)
-      end
-
       opts.on('-h', '--help', 'Print help') do
         puts opts
         exit(0)
@@ -55,6 +83,40 @@ class SndbxCliParser
     abort('Error: expected exactly one image.') unless ARGV.length == 1
 
     { image: ARGV.first, volumes: volumes, ports: ports, workdir: workdir }
+  rescue OptionParser::ParseError => e
+    abort("Error: #{e.message}.")
+  end
+end
+
+class BuildCliParser
+  def call
+    all = false
+
+    OptionParser.new do |opts|
+      opts.banner = 'Usage: sndbx build IMAGE | --all'
+      opts.separator ''
+      opts.separator "Builds an image from #{Builder::IMAGES_DIR_SETTING}/IMAGE, always without the docker cache."
+      opts.separator "Builds #{Builder::BASE_NAME} first if the image needs it and it doesn't exist yet."
+      opts.separator ''
+
+      opts.on('-a', '--all', "Build #{Builder::BASE_NAME}, then every other image") do
+        all = true
+      end
+
+      opts.on('-l', '--list', 'Print image names') do
+        puts Builder.new(Settings.new).image_names
+        exit(0)
+      end
+
+      opts.on('-h', '--help', 'Print help') do
+        puts opts
+        exit(0)
+      end
+    end.parse!
+
+    abort('Error: expected exactly one image, or --all.') unless all ? ARGV.empty? : ARGV.length == 1
+
+    { image: ARGV.first }
   rescue OptionParser::ParseError => e
     abort("Error: #{e.message}.")
   end
@@ -77,6 +139,7 @@ class Settings
         # config_target: .claude # optional, relative to the user's home, defaults to .<name>
         # ports: ['3000'] # optional, always published; quote them, YAML reads 8080:22 as a number
         # docker_args: ['--memory=8g'] # optional, extra docker run arguments
+    # images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to images/ next to bin/
   YAML
 
   def image(name)
@@ -116,6 +179,14 @@ class Settings
     settings['tag_prefix'] || DEFAULT_TAG_PREFIX
   end
 
+  # __dir__ resolves symlinks, so the default finds the repo when bin/sndbx is linked into PATH, but not when it's copied.
+  def images_dir
+    dir = settings['images_dir'] if File.exist?(PATH)
+    return File.expand_path(dir, DIR) if dir
+
+    File.expand_path('../images', __dir__)
+  end
+
   private
 
   def images
@@ -133,6 +204,9 @@ class Settings
     unless prefix.nil? || (prefix.is_a?(String) && prefix.match?(TAG_PREFIX_FORMAT))
       abort("Error: invalid #{PATH}: tag_prefix must be a lowercase image name, e.g. sndbx.")
     end
+
+    images_dir = settings['images_dir']
+    abort("Error: invalid #{PATH}: images_dir must be a path.") unless images_dir.nil? || images_dir.is_a?(String)
 
     images = settings['images'] || []
     abort("Error: invalid #{PATH}: images must be a list.") unless images.is_a?(Array)
@@ -159,6 +233,94 @@ class Settings
     File.write(PATH, EXAMPLE)
 
     abort("Created an example config at #{PATH}, edit it and run again.")
+  end
+end
+
+# Builds images from images_dir/<name>/, always without the docker cache.
+# Images are tagged <tag_prefix>:<name>.
+# An image built FROM ${TAG_PREFIX}:base gets the base image built first, but only if it doesn't exist yet.
+class Builder
+  DOCKER = 'docker'.freeze
+  BASE_NAME = 'base'.freeze
+  BASE_FROM_FORMAT = /^FROM\s+\$\{TAG_PREFIX\}:#{BASE_NAME}(?:\s|$)/.freeze
+  IMAGES_DIR_SETTING = 'images_dir'.freeze
+
+  def initialize(settings)
+    @tag_prefix = settings.tag_prefix
+    @images_dir = settings.images_dir
+  end
+
+  # Every directory in images_dir with a Dockerfile, base included.
+  def image_names
+    check_images_dir
+    Dir.glob('*/Dockerfile', base: @images_dir).map { |path| File.dirname(path) }.sort
+  end
+
+  # Builds every image when image is nil.
+  def call(image:)
+    names = image_names
+    abort("Error: unknown image '#{image}', expected one of: #{names.join(', ')}.") unless image.nil? || names.include?(image)
+
+    check_docker
+
+    if image
+      build_with_base(image)
+    else
+      # Base goes first, so every other image is built on the fresh one.
+      [BASE_NAME, *(names - [BASE_NAME])].each { |name| build_with_base(name) }
+    end
+  end
+
+  private
+
+  def build_with_base(name)
+    if name != BASE_NAME && needs_base?(name) && !base_exists?
+      puts "==> #{tag_for(BASE_NAME)} doesn't exist yet"
+      build(BASE_NAME)
+    end
+
+    build(name)
+  end
+
+  def build(name)
+    tag = tag_for(name)
+
+    # Only images FROM ${TAG_PREFIX}:base declare the arg, docker warns about unused ones.
+    args = needs_base?(name) ? ['--build-arg', "TAG_PREFIX=#{@tag_prefix}"] : []
+
+    puts "==> Building #{tag} from #{image_dir(name)}"
+    abort("Error: failed to build #{tag}.") unless system(DOCKER, 'build', '--no-cache', *args, '-t', tag, image_dir(name))
+  end
+
+  def needs_base?(name)
+    File.read(File.join(image_dir(name), 'Dockerfile')).match?(BASE_FROM_FORMAT)
+  end
+
+  def base_exists?
+    quiet_system(DOCKER, 'image', 'inspect', tag_for(BASE_NAME))
+  end
+
+  def tag_for(name)
+    "#{@tag_prefix}:#{name}"
+  end
+
+  def image_dir(name)
+    File.join(@images_dir, name)
+  end
+
+  def check_images_dir
+    return if File.directory?(@images_dir)
+
+    abort("Error: images directory #{@images_dir} does not exist, set #{IMAGES_DIR_SETTING} in #{Settings::PATH}.")
+  end
+
+  def check_docker
+    abort('Error: docker is not installed.') unless quiet_system(DOCKER, '--version')
+    abort('Error: docker is not running.') unless quiet_system(DOCKER, 'info')
+  end
+
+  def quiet_system(*command)
+    system(*command, out: File::NULL, err: File::NULL)
   end
 end
 
@@ -245,6 +407,11 @@ class Sandbox
 end
 
 ARGV << '-h' if ARGV.empty?
-options = SndbxCliParser.new.call
 
-Sandbox.new(**options.merge(image: Settings.new.image(options[:image]))).call
+case SndbxCliParser.new.call
+when 'run'
+  options = RunCliParser.new.call
+  Sandbox.new(**options.merge(image: Settings.new.image(options[:image]))).call
+when 'build'
+  Builder.new(Settings.new).call(**BuildCliParser.new.call)
+end

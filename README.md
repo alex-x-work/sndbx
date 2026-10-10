@@ -19,15 +19,18 @@ The `dsh` image patches out dsh's refusal to listen on `0.0.0.0`, the check upst
 
 ## Build
 
-`bin/build IMAGE` builds `images/IMAGE/`, always with `--no-cache`. Every image is tagged `<tag_prefix>:<directory name>`, e.g. `sndbx:base`, `sndbx:claude`. The prefix is `sndbx` unless `tag_prefix` is set in the [settings](#configure); `bin/build` reads it with `sndbx --tag-prefix`, so it needs `bin/sndbx` and Ruby.
+`sndbx build IMAGE` builds `images/IMAGE/`, always with `--no-cache`. Every image is tagged `<tag_prefix>:<directory name>`, e.g. `sndbx:base`, `sndbx:claude`. The prefix is `sndbx` unless `tag_prefix` is set in the [settings](#configure).
 
 ```sh
-bin/build claude    # build/rebuild sndbx:claude, and sndbx:base first if it doesn't exist yet
-bin/build base      # build/rebuild sndbx:base
-bin/build --all     # build/rebuild sndbx:base, then every other image
+sndbx build claude    # build/rebuild sndbx:claude, and sndbx:base first if it doesn't exist yet
+sndbx build base      # build/rebuild sndbx:base
+sndbx build --all     # build/rebuild sndbx:base, then every other image
+sndbx build --list    # print the images build accepts
 ```
 
-`bin/build claude` won't rebuild an existing `sndbx:base`. To pick up base changes, run `bin/build base` before it.
+`sndbx build claude` won't rebuild an existing `sndbx:base`. To pick up base changes, run `sndbx build base` before it.
+
+`sndbx` finds `images/` next to its own `bin/` directory, following symlinks. If you copy `bin/sndbx` out of the repo, set `images_dir` in the [settings](#configure).
 
 To add an image, create `images/<name>/Dockerfile` starting with:
 
@@ -46,12 +49,14 @@ FROM ${TAG_PREFIX}:base
 
 ### Install
 
-Put `bin` on `PATH` and source the bash completions, or copy both files wherever you keep them:
+Put `bin` on `PATH`, or symlink `bin/sndbx` into a directory on it, and source the bash completions:
 
 ```sh
-export PATH="/path/to/sndbx/bin:$PATH"
+export PATH="/path/to/sndbx/bin:$PATH"            # or: ln -s /path/to/sndbx/bin/sndbx ~/.local/bin/sndbx
 source /path/to/sndbx/completions/_sndbx
 ```
+
+A copy of `bin/sndbx` works too, but `sndbx build` then needs `images_dir` in the settings.
 
 ### Configure
 
@@ -59,6 +64,7 @@ Images are listed in `~/.config/sndbx/settings.yml`. The first run creates an ex
 
 ```yaml
 tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
+images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to images/ next to bin/; relative to ~/.config/sndbx
 images:
   - name: claude
     tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
@@ -80,12 +86,11 @@ images:
 ### Use
 
 ```sh
-sndbx claude                               # mount the current directory
-sndbx claude -v ../api -v ../web           # mount several, start in the last one
-sndbx claude -v ../api -v ../web -w api    # mount several, start in api
-sndbx claude -p 3000 -p 8080:80            # publish ports, 3000 means 3000:3000
-sndbx --list                               # print configured image names
-sndbx --tag-prefix                         # print the image tag prefix
+sndbx run claude                               # mount the current directory
+sndbx run claude -v ../api -v ../web           # mount several, start in the last one
+sndbx run claude -v ../api -v ../web -w api    # mount several, start in api
+sndbx run claude -p 3000 -p 8080:80            # publish ports, 3000 means 3000:3000
+sndbx run --list                               # print configured image names
 sndbx --version
 ```
 
