@@ -1,104 +1,110 @@
-#!/usr/bin/env bash
+#!/usr/bin/env ruby
 # Build an image from images/<name>/, always without the docker cache.
 # Images are tagged <prefix>:<name>, with the prefix from `sndbx --tag-prefix`.
 # An image built FROM ${TAG_PREFIX}:base gets the base image built first, but only if it doesn't exist yet.
 
-set -euo pipefail
+class Builder
+  DOCKER = 'docker'.freeze
+  BIN_DIR = __dir__.freeze
+  IMAGES_DIR = File.expand_path('../images', BIN_DIR).freeze
+  BASE_NAME = 'base'.freeze
+  BASE_FROM_FORMAT = /^FROM\s+\$\{TAG_PREFIX\}:#{BASE_NAME}(?:\s|$)/.freeze
 
-BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGES_DIR="$(cd "$BIN_DIR/../images" && pwd)"
-BASE_NAME=base
-TAG_PREFIX=
+  # Every directory in images/ with a Dockerfile, base included.
+  def self.image_names
+    Dir.glob('*/Dockerfile', base: IMAGES_DIR).map { |path| File.dirname(path) }.sort
+  end
 
-fail() {
-  echo "Error: $*" >&2
-  exit 1
-}
+  def initialize(tag_prefix)
+    @tag_prefix = tag_prefix
+  end
 
-# Every directory in images/ with a Dockerfile, base included.
-image_names() {
-  local dir
-  for dir in "$IMAGES_DIR"/*/; do
-    dir="$(basename "$dir")"
-    if [[ -f "$IMAGES_DIR/$dir/Dockerfile" ]]; then echo "$dir"; fi
-  done
-}
+  def build_all
+    # Base goes first, so every other image is built on the fresh one.
+    [BASE_NAME, *(self.class.image_names - [BASE_NAME])].each { |name| build_with_base(name) }
+  end
 
-usage() {
-  local script
-  script="$(basename "$0")"
+  def build_with_base(name)
+    if name != BASE_NAME && needs_base?(name) && !base_exists?
+      puts "==> #{tag_for(BASE_NAME)} doesn't exist yet"
+      build(BASE_NAME)
+    end
 
-  echo "Usage: $script IMAGE    build an image"
-  echo "       $script --all    build all images"
-  echo
-  echo "Images: $(image_names | paste -sd ' ' -)"
-}
+    build(name)
+  end
 
-tag_for() {
-  echo "$TAG_PREFIX:$1"
-}
+  private
 
-needs_base() {
-  grep -qE '^FROM[[:space:]]+\$\{TAG_PREFIX\}:'"$BASE_NAME"'([[:space:]]|$)' "$IMAGES_DIR/$1/Dockerfile"
-}
+  def build(name)
+    tag = tag_for(name)
 
-base_exists() {
-  docker image inspect "$(tag_for "$BASE_NAME")" > /dev/null 2>&1
-}
+    # Only images FROM ${TAG_PREFIX}:base declare the arg, docker warns about unused ones.
+    args = needs_base?(name) ? ['--build-arg', "TAG_PREFIX=#{@tag_prefix}"] : []
 
-build() {
-  local tag args=()
-  tag="$(tag_for "$1")"
+    puts "==> Building #{tag} from images/#{name}"
+    abort("Error: failed to build #{tag}.") unless system(DOCKER, 'build', '--no-cache', *args, '-t', tag, image_dir(name))
+  end
 
-  # Only images FROM ${TAG_PREFIX}:base declare the arg, docker warns about unused ones.
-  if needs_base "$1"; then args=(--build-arg "TAG_PREFIX=$TAG_PREFIX"); fi
+  def needs_base?(name)
+    File.read(File.join(image_dir(name), 'Dockerfile')).match?(BASE_FROM_FORMAT)
+  end
 
-  echo "==> Building $tag from images/$1"
-  docker build --no-cache "${args[@]}" -t "$tag" "$IMAGES_DIR/$1" || fail "failed to build $tag."
-}
+  def base_exists?
+    quiet_system(DOCKER, 'image', 'inspect', tag_for(BASE_NAME))
+  end
 
-build_with_base() {
-  if [[ "$1" != "$BASE_NAME" ]] && needs_base "$1" && ! base_exists; then
-    echo "==> $(tag_for "$BASE_NAME") doesn't exist yet"
-    build "$BASE_NAME"
-  fi
+  def tag_for(name)
+    "#{@tag_prefix}:#{name}"
+  end
 
-  build "$1"
-}
+  def image_dir(name)
+    File.join(IMAGES_DIR, name)
+  end
 
-build_all() {
-  local image
+  def quiet_system(*command)
+    system(*command, out: File::NULL, err: File::NULL)
+  end
+end
 
-  # Base goes first, so every other image is built on the fresh one.
-  for image in $BASE_NAME $(image_names | grep -vxF "$BASE_NAME"); do
-    build_with_base "$image"
-  done
-}
+def usage
+  script = File.basename($PROGRAM_NAME)
 
-main() {
-  [[ $# -eq 1 ]] || { usage >&2; exit 1; }
+  <<~USAGE
+    Usage: #{script} IMAGE    build an image
+           #{script} --all    build all images
 
-  local names
-  names="$(image_names)"
+    Images: #{Builder.image_names.join(' ')}
+  USAGE
+end
 
-  case "$1" in
-    -h | --help)
-      usage
-      exit 0
-      ;;
-    --all) ;;
-    *)
-      [[ $'\n'"$names"$'\n' == *$'\n'"$1"$'\n'* ]] ||
-        fail "unknown image '$1', expected one of: $(echo "$names" | paste -sd ' ' -)."
-      ;;
-  esac
+def tag_prefix
+  prefix = IO.popen([File.join(Builder::BIN_DIR, 'sndbx'), '--tag-prefix'], &:read).chomp
+  abort('Error: cannot read the tag prefix from sndbx.') unless $?.success? && !prefix.empty?
 
-  TAG_PREFIX="$("$BIN_DIR/sndbx" --tag-prefix)" || fail "cannot read the tag prefix from sndbx."
+  prefix
+end
 
-  command -v docker > /dev/null || fail "docker is not installed."
-  docker info > /dev/null 2>&1 || fail "cannot reach the docker daemon, is it running?"
+def check_docker
+  abort('Error: docker is not installed.') unless system(Builder::DOCKER, '--version', out: File::NULL, err: File::NULL)
+  abort('Error: cannot reach the docker daemon, is it running?') unless system(Builder::DOCKER, 'info', out: File::NULL, err: File::NULL)
+end
 
-  if [[ "$1" == "--all" ]]; then build_all; else build_with_base "$1"; fi
-}
+abort(usage) unless ARGV.length == 1
 
-main "$@"
+target = ARGV.first
+names = Builder.image_names
+
+case target
+when '-h', '--help'
+  puts usage
+  exit(0)
+when '--all'
+  nil
+else
+  abort("Error: unknown image '#{target}', expected one of: #{names.join(' ')}.") unless names.include?(target)
+end
+
+builder = Builder.new(tag_prefix)
+check_docker
+
+target == '--all' ? builder.build_all : builder.build_with_base(target)
