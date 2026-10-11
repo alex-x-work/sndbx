@@ -4,7 +4,7 @@ _sndbx() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
   local command="${COMP_WORDS[1]}"
-  local has_image=0 i dir
+  local has_image=0 has_workspace=0 i option value dir target
   local -a workdirs=()
 
   if (( COMP_CWORD == 1 )); then
@@ -16,8 +16,11 @@ _sndbx() {
     return 0
   fi
 
-  # Bash splits --volume=DIR into "--volume" "=" "DIR"
-  if [[ "${cur}" == "=" ]]; then
+  # Bash splits --volume=SRC:DST into "--volume" "=" "SRC" ":" "DST", nothing completes DST or the rest
+  if [[ "${cur}" == ":" || "${prev}" == ":" ]]; then
+    COMPREPLY=()
+    return 0
+  elif [[ "${cur}" == "=" ]]; then
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     cur=""
   elif [[ "${prev}" == "=" ]]; then
@@ -27,15 +30,36 @@ _sndbx() {
   # Look for an image and volumes given after the command and before the current word, skipping option values
   for (( i = 2; i < COMP_CWORD; i++ )); do
     case "${COMP_WORDS[i]}" in
-      -v|--volume)
+      -v|--volume|-w|--workdir|-p|--publish)
+        option="${COMP_WORDS[i]}"
         (( i++ ))
         [[ "${COMP_WORDS[i]}" == "=" ]] && (( i++ ))
-        dir="${COMP_WORDS[i]/#\~/${HOME}}"
-        dir="$(cd -- "${dir}" 2>/dev/null && pwd)" && workdirs+=("${dir##*/}")
-        ;;
-      -w|--workdir|-p|--publish)
-        (( i++ ))
-        [[ "${COMP_WORDS[i]}" == "=" ]] && (( i++ ))
+        value="${COMP_WORDS[i]}"
+        # Rejoin SRC:DST:OPTS and HOST:CONTAINER, which bash splits at each colon unless they're quoted
+        while (( i + 2 < COMP_CWORD )) && [[ "${COMP_WORDS[i+1]}" == ":" ]]; do
+          value+=":${COMP_WORDS[i+2]}"
+          (( i += 2 ))
+        done
+        [[ "${option}" == -v || "${option}" == --volume ]] || continue
+
+        value="${value//[\"\']/}"
+        dir="${value%%:*}"
+        dir="${dir/#\~/${HOME}}"
+        dir="$(cd -- "${dir}" 2>/dev/null && pwd)" || continue
+        target=""
+        [[ "${value}" == *:* ]] && target="${value#*:}" && target="${target%%:*}"
+
+        # Workdir names a volume in /workspace by its path there, any other by its absolute path
+        if [[ -z "${target}" ]]; then
+          workdirs+=("${dir##*/}")
+          has_workspace=1
+        elif [[ "${target}" == /workspace/* ]]; then
+          workdirs+=("${target#/workspace/}")
+          has_workspace=1
+        else
+          [[ "${target}" == /workspace ]] && has_workspace=1
+          workdirs+=("${target}")
+        fi
         ;;
       -a|--all) has_image=1 ;;
       -*) ;;
@@ -51,8 +75,8 @@ _sndbx() {
           mapfile -t COMPREPLY < <(compgen -d -- "${cur}")
           ;;
         -w|--workdir)
-          # Workdir names a volume by basename, the current directory when none are given
-          (( ${#workdirs[@]} )) || workdirs=("${PWD##*/}")
+          # The current directory is mounted unless a volume is in /workspace
+          (( has_workspace )) || workdirs+=("${PWD##*/}")
           mapfile -t COMPREPLY < <(compgen -W "${workdirs[*]}" -- "${cur}")
           ;;
         -p|--publish)

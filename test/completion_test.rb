@@ -47,6 +47,15 @@ class CompletionTest < Minitest::Test
 
     assert_equal %w[claude codex], complete('run', '-v', api, '-w', 'api', '-p', '3000', '')
     assert_equal %w[claude codex], complete('run', '--volume', '=', api, '--publish', '=', '3000', '')
+    assert_equal %w[claude codex], complete('run', '-v', api, ':', '/opt/api', ':', 'ro', '-p', '8080', ':', '80', '')
+  end
+
+  def test_volume_target_completes_nothing
+    write_images_settings
+
+    assert_empty complete('run', '-v', 'src', ':')
+    assert_empty complete('run', '-v', 'src', ':', '')
+    assert_empty complete('run', '-v', 'src', ':', '/opt', ':', '')
   end
 
   def test_run_no_image_after_image
@@ -91,6 +100,16 @@ class CompletionTest < Minitest::Test
     mkdir('home/notes')
 
     assert_equal %w[api notes web], complete('run', '-v', api, '-v', '../web', '-v', '~/notes', '-w', '')
+  end
+
+  def test_workdir_completes_volume_targets
+    api = mkdir('work/api')
+    mkdir('work/sdk')
+    File.write(File.join(@work, 'notes.txt'), '')
+
+    assert_equal %w[/opt/sdk project],
+                 complete('run', '-v', '../sdk', ':', '/opt/sdk', ':', 'ro', '-v', 'notes.txt:/notes.txt', '-w', '')
+    assert_equal %w[/opt/sdk backend], complete('run', '-v', '"../sdk:/opt/sdk"', '-v', "#{api}:/workspace/backend", '-w', '')
   end
 
   def test_workdir_skips_missing_volumes

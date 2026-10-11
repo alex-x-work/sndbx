@@ -5,7 +5,7 @@ require 'optparse'
 require 'yaml'
 
 module Sndbx
-  VERSION = '0.11.2'.freeze
+  VERSION = '0.12.0'.freeze
 
   class Error < StandardError; end
 
@@ -57,14 +57,17 @@ module Sndbx
         opts.banner = 'Usage: sndbx run IMAGE [options]'
         opts.separator ''
         opts.separator "Runs a sandboxed image from #{Settings::PATH}."
-        opts.separator 'Mounts the current directory unless volumes are given.'
+        opts.separator "Mounts the current directory unless a volume is mounted in #{Sandbox::MOUNT_ROOT}."
         opts.separator ''
 
-        opts.on('-v', '--volume=DIR', "Mount a directory as #{Sandbox::MOUNT_ROOT}/<basename>, repeatable") do |dir|
-          volumes.push(dir)
+        opts.on('-v', '--volume=SRC[:DST[:OPTS]]',
+                "Mount SRC at DST, #{Sandbox::MOUNT_ROOT}/<basename> by default,",
+                "with docker's OPTS, e.g. ro, repeatable") do |volume|
+          volumes.push(volume)
         end
 
-        opts.on('-w', '--workdir=NAME', "Start in #{Sandbox::MOUNT_ROOT}/<NAME>, the last volume by default") do |name|
+        opts.on('-w', '--workdir=NAME', "Start in #{Sandbox::MOUNT_ROOT}/<NAME>, or NAME if it's absolute,",
+                "the last directory volume in #{Sandbox::MOUNT_ROOT} by default") do |name|
           workdir = name
         end
 
@@ -367,13 +370,14 @@ module Sndbx
     PORT_FORMAT = %r{\A(?:[\d.]+:)?\d+(?::\d+)?(?:/(?:tcp|udp))?\z}.freeze
     BARE_PORT_FORMAT = %r{\A(\d+)(/(?:tcp|udp))?\z}.freeze
     MAX_PORT = 65_535
+    VOLUME_FORMAT = /\A([^:]+)(?::([^:]+))?(?::([^:]+))?\z/.freeze
     FORBIDDEN_DIRS = [Dir.home, '/'].freeze
 
     def initialize(image:, volumes:, ports:, workdir:)
       @image = image
-      @mounts = mounts(volumes.empty? ? [Dir.pwd] : volumes)
+      @volumes = volumes(volumes)
       @ports = (image[:ports] + ports).map { |port| normalize_port(port) }.uniq
-      @workdir = workdir || @mounts.keys.last
+      @workdir = workdir ? workdir_target(workdir) : default_workdir
     end
 
     def call
@@ -382,29 +386,69 @@ module Sndbx
       check_workdir
       FileUtils.mkdir_p(@image[:config_dir])
 
-      exec(DOCKER, *RUN_OPTIONS, "--workdir=#{mount_target(@workdir)}", *volume_args, *port_args, *@image[:docker_args], @image[:tag])
+      exec(DOCKER, *RUN_OPTIONS, "--workdir=#{@workdir}", *volume_args, *port_args, *@image[:docker_args], @image[:tag])
     end
 
     private
 
-    def mounts(volumes)
-      volumes.each_with_object({}) do |volume, mounts|
-        path = File.expand_path(volume)
-        name = File.basename(path)
+    def volumes(specs)
+      volumes = specs.map { |spec| parse_volume(spec) }
+      volumes.unshift(parse_volume(Dir.pwd)) unless volumes.any? { |volume| workspace?(volume[:target]) }
 
-        raise Error, "#{path} is not a directory" unless File.directory?(path)
-        raise Error, "refusing to mount #{path}" if FORBIDDEN_DIRS.any? { |dir| File.identical?(dir, path) }
-        raise Error, "more than one volume is named '#{name}'" if mounts.key?(name)
-
-        mounts[name] = path
+      volumes.map { |volume| volume[:target] }.tally.each do |target, count|
+        raise Error, "more than one volume is mounted at #{target}" if count > 1
       end
+
+      volumes
+    end
+
+    # Docker's -v syntax, SRC[:DST[:OPTS]], except that SRC is always a host path and DST defaults to MOUNT_ROOT/<basename>.
+    def parse_volume(spec)
+      match = spec.match(VOLUME_FORMAT)
+      raise Error, "invalid volume '#{spec}', expected SRC[:DST[:OPTS]]" unless match
+
+      source = File.expand_path(match[1])
+      raise Error, "#{source} does not exist" unless File.exist?(source)
+      raise Error, "refusing to mount #{source}" if FORBIDDEN_DIRS.any? { |dir| File.identical?(dir, source) }
+
+      if match[2]
+        raise Error, "invalid volume '#{spec}', DST must be an absolute path" unless match[2].start_with?('/')
+
+        target = File.expand_path(match[2])
+      else
+        raise Error, "#{source} is not a directory" unless File.directory?(source)
+
+        target = mount_target(File.basename(source))
+      end
+
+      { source: source, target: target, options: match[3] }
     end
 
     def volume_args
-      @mounts
-        .map { |name, path| "#{path}:#{mount_target(name)}" }
+      @volumes
+        .map { |volume| volume.values_at(:source, :target, :options).compact.join(':') }
         .push("#{@image[:config_dir]}:#{@image[:config_target]}")
         .flat_map { |volume| ['-v', volume] }
+    end
+
+    def directory_targets
+      @volumes.select { |volume| File.directory?(volume[:source]) }.map { |volume| volume[:target] }
+    end
+
+    def default_workdir
+      directory_targets.select { |target| workspace?(target) }.last || directory_targets.last
+    end
+
+    def workdir_target(name)
+      name.start_with?('/') ? File.expand_path(name) : mount_target(name)
+    end
+
+    def workdir_name(target)
+      target.delete_prefix("#{MOUNT_ROOT}/")
+    end
+
+    def workspace?(target)
+      target == MOUNT_ROOT || target.start_with?("#{MOUNT_ROOT}/")
     end
 
     def normalize_port(port)
@@ -431,9 +475,11 @@ module Sndbx
     end
 
     def check_workdir
-      return if @mounts.key?(@workdir)
+      names = directory_targets.map { |target| workdir_name(target) }
+      raise Error, 'no directory volume to start in' if names.empty?
+      return if directory_targets.include?(@workdir)
 
-      raise Error, "workdir '#{@workdir}' is not a volume, expected one of: #{@mounts.keys.join(', ')}"
+      raise Error, "workdir '#{workdir_name(@workdir)}' is not a directory volume, expected one of: #{names.join(', ')}"
     end
   end
 end

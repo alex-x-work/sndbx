@@ -43,7 +43,8 @@ FROM ${TAG_PREFIX}:base
 
 `sndbx` wraps the `docker run` commands below with less typing. It:
 
-- mounts the current directory, or each `-v DIR`, at `/workspace/<basename>`
+- mounts each `-v SRC[:DST[:OPTS]]` like `docker run -v`, at `/workspace/<basename>` when there's no `DST`
+- mounts the current directory at `/workspace/<basename>` unless a volume is mounted in `/workspace`
 - mounts the image's config directory at `/home/<user>/<config_target>`
 - publishes the image's `ports` plus each `-p PORT`
 
@@ -86,11 +87,12 @@ images:
 ### Use
 
 ```sh
-sndbx run claude                               # mount the current directory
-sndbx run claude -v ../api -v ../web           # mount several, start in the last one
-sndbx run claude -v ../api -v ../web -w api    # mount several, start in api
-sndbx run claude -p 3000 -p 8080:80            # publish ports, 3000 means 3000:3000
-sndbx run --list                               # print configured image names
+sndbx run claude                                      # mount the current directory
+sndbx run claude -v ../api -v ../web                  # mount several, start in the last one
+sndbx run claude -v ../api -v ../web -w api           # mount several, start in api
+sndbx run claude -v ./garmin/sdk:/opt/garmin/sdk:ro   # also mount a read-only SDK, still start in the current directory
+sndbx run claude -p 3000 -p 8080:80                   # publish ports, 3000 means 3000:3000
+sndbx run --list                                      # print configured image names
 sndbx --version
 ```
 

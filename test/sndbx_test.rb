@@ -182,22 +182,90 @@ class SndbxTest < Minitest::Test
   def test_workdir_must_be_a_volume
     write_claude_settings
 
-    assert_error "workdir 'api' is not a volume, expected one of: project", sndbx('run', 'claude', '-w', 'api')
+    assert_error "workdir 'api' is not a directory volume, expected one of: project", sndbx('run', 'claude', '-w', 'api')
   end
 
-  def test_volume_must_be_a_directory
+  def test_run_with_volume_target_and_options_keeps_the_current_directory
+    write_claude_settings
+    sdk = mkdir('work/garmin/sdk')
+
+    sndbx('run', 'claude', '-v', '../garmin/sdk:/opt/garmin/sdk:ro')
+
+    assert_equal [*run_options('project'), *volume('project'), '-v', "#{sdk}:/opt/garmin/sdk:ro", *config_volume, 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_with_volume_target_in_the_workspace_replaces_the_current_directory
+    write_claude_settings
+    api = mkdir('work/api')
+
+    sndbx('run', 'claude', '-v', "#{api}:/workspace/backend/")
+
+    assert_equal [*run_options('backend'), *volume('backend', api), *config_volume, 'sndbx:claude'], docker_calls.last
+  end
+
+  def test_run_with_file_volume
+    write_claude_settings
+    gitconfig = File.join(@home, '.gitconfig')
+    File.write(gitconfig, '')
+
+    sndbx('run', 'claude', '-v', '~/.gitconfig:/home/ubuntu/.gitconfig:ro')
+
+    assert_equal [*run_options('project'), *volume('project'), '-v', "#{gitconfig}:/home/ubuntu/.gitconfig:ro", *config_volume,
+                  'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_with_absolute_workdir
+    write_claude_settings
+    sdk = mkdir('work/sdk')
+
+    sndbx('run', 'claude', '-v', "#{sdk}:/opt/sdk", '-w', '/opt/sdk')
+
+    assert_includes docker_calls.last, '--workdir=/opt/sdk'
+  end
+
+  def test_workdir_must_be_a_directory_volume
+    write_claude_settings
+    File.write(File.join(@work, 'notes.txt'), '')
+
+    assert_error "workdir '/notes.txt' is not a directory volume, expected one of: project",
+                 sndbx('run', 'claude', '-v', 'notes.txt:/notes.txt', '-w', '/notes.txt')
+  end
+
+  def test_volume_without_target_must_be_a_directory
+    write_claude_settings
+    File.write(File.join(@work, 'notes.txt'), '')
+
+    assert_error "#{File.join(@work, 'notes.txt')} is not a directory", sndbx('run', 'claude', '-v', 'notes.txt')
+  end
+
+  def test_volume_must_exist
     write_claude_settings
     missing = File.join(@root, 'missing')
 
-    assert_error "#{missing} is not a directory", sndbx('run', 'claude', '-v', missing)
+    assert_error "#{missing} does not exist", sndbx('run', 'claude', '-v', "#{missing}:/missing")
   end
 
-  def test_volume_names_must_be_unique
+  def test_volume_target_must_be_absolute
+    write_claude_settings
+
+    assert_error "invalid volume '.:workspace', DST must be an absolute path", sndbx('run', 'claude', '-v', '.:workspace')
+  end
+
+  def test_invalid_volume
+    write_claude_settings
+
+    assert_error "invalid volume '.:/a:ro:b', expected SRC[:DST[:OPTS]]", sndbx('run', 'claude', '-v', '.:/a:ro:b')
+    assert_error "invalid volume '.::ro', expected SRC[:DST[:OPTS]]", sndbx('run', 'claude', '-v', '.::ro')
+  end
+
+  def test_volume_targets_must_be_unique
     write_claude_settings
     first = mkdir('a/project')
     second = mkdir('b/project')
 
-    assert_error "more than one volume is named 'project'", sndbx('run', 'claude', '-v', first, '-v', second)
+    assert_error 'more than one volume is mounted at /workspace/project', sndbx('run', 'claude', '-v', first, '-v', second)
   end
 
   def test_refuses_to_mount_home
