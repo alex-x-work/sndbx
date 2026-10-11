@@ -1,0 +1,61 @@
+require 'fileutils'
+require 'json'
+require 'minitest/autorun'
+require 'open3'
+require 'rbconfig'
+require 'tmpdir'
+require 'yaml'
+
+module SndbxTestHelper
+  BIN = File.expand_path('../bin/sndbx', __dir__)
+
+  Result = Struct.new(:out, :err, :status) do
+    def success?
+      status.success?
+    end
+  end
+
+  def setup
+    @root = File.realpath(Dir.mktmpdir)
+    @home = mkdir('home')
+    @bin = mkdir('bin')
+    @work = mkdir('work/project')
+    @images_dir = mkdir('images')
+  end
+
+  def teardown
+    FileUtils.remove_entry(@root)
+  end
+
+  private
+
+  def sndbx(*args, env: {})
+    Result.new(*Open3.capture3({ 'HOME' => @home, 'PATH' => @bin }.merge(env), RbConfig.ruby, BIN, *args, chdir: @work))
+  end
+
+  def mkdir(path)
+    File.join(@root, path).tap { |dir| FileUtils.mkdir_p(dir) }
+  end
+
+  def write_executable(path, content)
+    File.write(path, content)
+    File.chmod(0o755, path)
+  end
+
+  def settings_path(home = @home)
+    File.join(home, '.config', 'sndbx', 'settings.yml')
+  end
+
+  def write_settings(home: @home, **settings)
+    write_settings_file(JSON.parse(settings.to_json).to_yaml, home: home)
+  end
+
+  def write_settings_file(content, home: @home)
+    FileUtils.mkdir_p(File.dirname(settings_path(home)))
+    File.write(settings_path(home), content)
+  end
+
+  def write_dockerfile(name, content)
+    File.write(File.join(mkdir("images/#{name}"), 'Dockerfile'), content)
+  end
+end

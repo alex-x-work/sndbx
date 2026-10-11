@@ -122,6 +122,15 @@ docker run --rm -it \
   sndbx:dsh
 ```
 
+## Test
+
+```sh
+rake                              # every test
+ruby test/completion_test.rb      # one file
+```
+
+The tests run `bin/sndbx` with a temporary `HOME` and a fake `docker` that records its arguments, so they need neither Docker nor existing settings. The completion tests call `_sndbx` in bash 4 or newer, like the completions themselves.
+
 ## License
 
 [MIT](LICENSE)

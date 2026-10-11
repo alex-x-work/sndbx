@@ -4,48 +4,54 @@ require 'fileutils'
 require 'optparse'
 require 'yaml'
 
-VERSION = '0.11.0'.freeze
+VERSION = '0.11.1'.freeze
 
-class SndbxCliParser
-  COMMANDS = %w[run build].freeze
-
+module Command
   def call
-    parser = OptionParser.new do |opts|
-      opts.banner = 'Usage: sndbx command [options]'
-      opts.separator ''
-      opts.separator 'Commands:'
-      opts.separator '    run IMAGE      Run a sandboxed image'
-      opts.separator '    build IMAGE    Build an image'
-      opts.separator ''
-      opts.separator "Run 'sndbx command --help' for a command's options."
-      opts.separator ''
+    run(**parse_args)
+  end
 
-      opts.on('-V', '--version', 'Print version') do
-        puts "sndbx #{VERSION}"
-        exit(0)
-      end
+  private
 
-      opts.on('-h', '--help', 'Print help') do
-        puts opts
-        exit(0)
-      end
-    end
-
-    # Stop at the command, its options are parsed by the command's parser.
-    parser.order!
-    command = ARGV.shift
-
-    abort(parser.help) unless command
-    abort("Error: unknown command '#{command}', expected one of: #{COMMANDS.join(', ')}.") unless COMMANDS.include?(command)
-
-    command
+  def parse_args
+    parse
   rescue OptionParser::ParseError => e
     abort("Error: #{e.message}.")
   end
+
+  def help_option(opts)
+    opts.on('-h', '--help', 'Print help') do
+      puts opts
+      exit(0)
+    end
+  end
 end
 
-class RunCliParser
-  def call
+module Docker
+  DOCKER = 'docker'.freeze
+
+  private
+
+  def check_docker
+    abort('Error: docker is not installed.') unless quiet_system(DOCKER, '--version')
+    abort('Error: docker is not running.') unless quiet_system(DOCKER, 'info')
+  end
+
+  def image_exists?(tag)
+    quiet_system(DOCKER, 'image', 'inspect', tag)
+  end
+
+  def quiet_system(*command)
+    system(*command, out: File::NULL, err: File::NULL)
+  end
+end
+
+class RunCommand
+  include Command
+
+  private
+
+  def parse
     volumes = []
     ports = []
     workdir = nil
@@ -74,22 +80,25 @@ class RunCliParser
         exit(0)
       end
 
-      opts.on('-h', '--help', 'Print help') do
-        puts opts
-        exit(0)
-      end
+      help_option(opts)
     end.parse!
 
     abort('Error: expected exactly one image.') unless ARGV.length == 1
 
     { image: ARGV.first, volumes: volumes, ports: ports, workdir: workdir }
-  rescue OptionParser::ParseError => e
-    abort("Error: #{e.message}.")
+  end
+
+  def run(image:, **options)
+    Sandbox.new(image: Settings.new.image(image), **options).call
   end
 end
 
-class BuildCliParser
-  def call
+class BuildCommand
+  include Command
+
+  private
+
+  def parse
     all = false
 
     OptionParser.new do |opts|
@@ -108,17 +117,58 @@ class BuildCliParser
         exit(0)
       end
 
-      opts.on('-h', '--help', 'Print help') do
-        puts opts
-        exit(0)
-      end
+      help_option(opts)
     end.parse!
 
     abort('Error: expected exactly one image, or --all.') unless all ? ARGV.empty? : ARGV.length == 1
 
     { image: ARGV.first }
-  rescue OptionParser::ParseError => e
-    abort("Error: #{e.message}.")
+  end
+
+  def run(image:)
+    Builder.new(Settings.new).call(image: image)
+  end
+end
+
+class SndbxCommand
+  include Command
+
+  COMMANDS = { 'run' => RunCommand, 'build' => BuildCommand }.freeze
+
+  private
+
+  def parse
+    ARGV << '-h' if ARGV.empty?
+
+    parser = OptionParser.new do |opts|
+      opts.banner = 'Usage: sndbx command [options]'
+      opts.separator ''
+      opts.separator 'Commands:'
+      opts.separator '    run IMAGE      Run a sandboxed image'
+      opts.separator '    build IMAGE    Build an image'
+      opts.separator ''
+      opts.separator "Run 'sndbx command --help' for a command's options."
+      opts.separator ''
+
+      opts.on('-V', '--version', 'Print version') do
+        puts "sndbx #{VERSION}"
+        exit(0)
+      end
+
+      help_option(opts)
+    end
+
+    parser.order!
+    name = ARGV.shift
+
+    abort(parser.help) unless name
+    command = COMMANDS.fetch(name) { abort("Error: unknown command '#{name}', expected one of: #{COMMANDS.keys.join(', ')}.") }
+
+    { command: command }
+  end
+
+  def run(command:)
+    command.new.call
   end
 end
 
@@ -174,14 +224,12 @@ class Settings
   end
 
   def tag_prefix
-    return DEFAULT_TAG_PREFIX unless File.exist?(PATH)
-
-    settings['tag_prefix'] || DEFAULT_TAG_PREFIX
+    optional_setting('tag_prefix') || DEFAULT_TAG_PREFIX
   end
 
   # __dir__ resolves symlinks, so the default finds the repo when bin/sndbx is linked into PATH, but not when it's copied.
   def images_dir
-    dir = settings['images_dir'] if File.exist?(PATH)
+    dir = optional_setting('images_dir')
     return File.expand_path(dir, DIR) if dir
 
     File.expand_path('../images', __dir__)
@@ -191,6 +239,10 @@ class Settings
 
   def images
     settings['images'] || []
+  end
+
+  def optional_setting(key)
+    settings[key] if File.exist?(PATH)
   end
 
   def settings
@@ -236,11 +288,9 @@ class Settings
   end
 end
 
-# Builds images from images_dir/<name>/, always without the docker cache.
-# Images are tagged <tag_prefix>:<name>.
-# An image built FROM ${TAG_PREFIX}:base gets the base image built first, but only if it doesn't exist yet.
 class Builder
-  DOCKER = 'docker'.freeze
+  include Docker
+
   BASE_NAME = 'base'.freeze
   BASE_FROM_FORMAT = /^FROM\s+\$\{TAG_PREFIX\}:#{BASE_NAME}(?:\s|$)/.freeze
   IMAGES_DIR_SETTING = 'images_dir'.freeze
@@ -250,13 +300,11 @@ class Builder
     @images_dir = settings.images_dir
   end
 
-  # Every directory in images_dir with a Dockerfile, base included.
   def image_names
     check_images_dir
     Dir.glob('*/Dockerfile', base: @images_dir).map { |path| File.dirname(path) }.sort
   end
 
-  # Builds every image when image is nil.
   def call(image:)
     names = image_names
     abort("Error: unknown image '#{image}', expected one of: #{names.join(', ')}.") unless image.nil? || names.include?(image)
@@ -266,7 +314,6 @@ class Builder
     if image
       build_with_base(image)
     else
-      # Base goes first, so every other image is built on the fresh one.
       [BASE_NAME, *(names - [BASE_NAME])].each { |name| build_with_base(name) }
     end
   end
@@ -297,7 +344,7 @@ class Builder
   end
 
   def base_exists?
-    quiet_system(DOCKER, 'image', 'inspect', tag_for(BASE_NAME))
+    image_exists?(tag_for(BASE_NAME))
   end
 
   def tag_for(name)
@@ -313,25 +360,17 @@ class Builder
 
     abort("Error: images directory #{@images_dir} does not exist, set #{IMAGES_DIR_SETTING} in #{Settings::PATH}.")
   end
-
-  def check_docker
-    abort('Error: docker is not installed.') unless quiet_system(DOCKER, '--version')
-    abort('Error: docker is not running.') unless quiet_system(DOCKER, 'info')
-  end
-
-  def quiet_system(*command)
-    system(*command, out: File::NULL, err: File::NULL)
-  end
 end
 
 class Sandbox
-  DOCKER = 'docker'.freeze
+  include Docker
+
   RUN_OPTIONS = ['run', '--rm', '-it'].freeze
   MOUNT_ROOT = '/workspace'.freeze
   PORT_FORMAT = %r{\A(?:[\d.]+:)?\d+(?::\d+)?(?:/(?:tcp|udp))?\z}.freeze
   BARE_PORT_FORMAT = %r{\A(\d+)(/(?:tcp|udp))?\z}.freeze
   MAX_PORT = 65_535
-  FORBIDDEN_DIRS = [Dir.home, '/'].map { |dir| File.realpath(dir) }.freeze
+  FORBIDDEN_DIRS = [Dir.home, '/'].freeze
 
   def initialize(image:, volumes:, ports:, workdir:)
     @image = image
@@ -342,6 +381,7 @@ class Sandbox
 
   def call
     check_docker
+    check_image
     check_workdir
     FileUtils.mkdir_p(@image[:config_dir])
 
@@ -356,7 +396,7 @@ class Sandbox
       name = File.basename(path)
 
       abort("Error: #{path} is not a directory.") unless File.directory?(path)
-      abort("Error: refusing to mount #{path}.") if FORBIDDEN_DIRS.include?(File.realpath(path))
+      abort("Error: refusing to mount #{path}.") if FORBIDDEN_DIRS.any? { |dir| File.identical?(dir, path) }
       abort("Error: more than one volume is named '#{name}'.") if mounts.key?(name)
 
       mounts[name] = path
@@ -389,10 +429,8 @@ class Sandbox
     File.join(MOUNT_ROOT, name)
   end
 
-  def check_docker
-    abort('Error: docker is not installed.') unless quiet_system(DOCKER, '--version')
-    abort('Error: docker is not running.') unless quiet_system(DOCKER, 'info')
-    abort("Error: docker image '#{@image[:tag]}' does not exist.") unless quiet_system(DOCKER, 'image', 'inspect', @image[:tag])
+  def check_image
+    abort("Error: docker image '#{@image[:tag]}' does not exist.") unless image_exists?(@image[:tag])
   end
 
   def check_workdir
@@ -400,18 +438,6 @@ class Sandbox
 
     abort("Error: workdir '#{@workdir}' is not a volume, expected one of: #{@mounts.keys.join(', ')}.")
   end
-
-  def quiet_system(*command)
-    system(*command, out: File::NULL, err: File::NULL)
-  end
 end
 
-ARGV << '-h' if ARGV.empty?
-
-case SndbxCliParser.new.call
-when 'run'
-  options = RunCliParser.new.call
-  Sandbox.new(**options.merge(image: Settings.new.image(options[:image]))).call
-when 'build'
-  Builder.new(Settings.new).call(**BuildCliParser.new.call)
-end
+SndbxCommand.new.call
