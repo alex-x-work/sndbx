@@ -4,440 +4,442 @@ require 'fileutils'
 require 'optparse'
 require 'yaml'
 
-VERSION = '0.11.1'.freeze
+module Sndbx
+  VERSION = '0.11.2'.freeze
 
-module Command
-  def call
-    run(**parse_args)
-  end
+  class Error < StandardError; end
 
-  private
-
-  def parse_args
-    parse
-  rescue OptionParser::ParseError => e
-    abort("Error: #{e.message}.")
-  end
-
-  def help_option(opts)
-    opts.on('-h', '--help', 'Print help') do
-      puts opts
-      exit(0)
+  module Command
+    def call
+      run(**parse)
     end
-  end
-end
 
-module Docker
-  DOCKER = 'docker'.freeze
+    private
 
-  private
-
-  def check_docker
-    abort('Error: docker is not installed.') unless quiet_system(DOCKER, '--version')
-    abort('Error: docker is not running.') unless quiet_system(DOCKER, 'info')
-  end
-
-  def image_exists?(tag)
-    quiet_system(DOCKER, 'image', 'inspect', tag)
-  end
-
-  def quiet_system(*command)
-    system(*command, out: File::NULL, err: File::NULL)
-  end
-end
-
-class RunCommand
-  include Command
-
-  private
-
-  def parse
-    volumes = []
-    ports = []
-    workdir = nil
-
-    OptionParser.new do |opts|
-      opts.banner = 'Usage: sndbx run IMAGE [options]'
-      opts.separator ''
-      opts.separator "Runs a sandboxed image from #{Settings::PATH}."
-      opts.separator 'Mounts the current directory unless volumes are given.'
-      opts.separator ''
-
-      opts.on('-v', '--volume=DIR', "Mount a directory as #{Sandbox::MOUNT_ROOT}/<basename>, repeatable") do |dir|
-        volumes.push(dir)
-      end
-
-      opts.on('-w', '--workdir=NAME', "Start in #{Sandbox::MOUNT_ROOT}/<NAME>, the last volume by default") do |name|
-        workdir = name
-      end
-
-      opts.on('-p', '--publish=PORT', 'Publish a port as HOST:CONTAINER, PORT means PORT:PORT, repeatable') do |port|
-        ports.push(port)
-      end
-
-      opts.on('-l', '--list', 'Print image names') do
-        puts Settings.new.image_names if File.exist?(Settings::PATH)
+    def help_option(opts)
+      opts.on('-h', '--help', 'Print help') do
+        puts opts
         exit(0)
       end
-
-      help_option(opts)
-    end.parse!
-
-    abort('Error: expected exactly one image.') unless ARGV.length == 1
-
-    { image: ARGV.first, volumes: volumes, ports: ports, workdir: workdir }
+    end
   end
 
-  def run(image:, **options)
-    Sandbox.new(image: Settings.new.image(image), **options).call
+  module Docker
+    DOCKER = 'docker'.freeze
+
+    private
+
+    def check_docker
+      raise Error, 'docker is not installed' unless quiet_system(DOCKER, '--version')
+      raise Error, 'docker is not running' unless quiet_system(DOCKER, 'info')
+    end
+
+    def image_exists?(tag)
+      quiet_system(DOCKER, 'image', 'inspect', tag)
+    end
+
+    def quiet_system(*command)
+      system(*command, out: File::NULL, err: File::NULL)
+    end
   end
-end
 
-class BuildCommand
-  include Command
+  class RunCommand
+    include Command
 
-  private
+    private
 
-  def parse
-    all = false
+    def parse
+      volumes = []
+      ports = []
+      workdir = nil
 
-    OptionParser.new do |opts|
-      opts.banner = 'Usage: sndbx build IMAGE | --all'
-      opts.separator ''
-      opts.separator "Builds an image from #{Builder::IMAGES_DIR_SETTING}/IMAGE, always without the docker cache."
-      opts.separator "Builds #{Builder::BASE_NAME} first if the image needs it and it doesn't exist yet."
-      opts.separator ''
+      OptionParser.new do |opts|
+        opts.banner = 'Usage: sndbx run IMAGE [options]'
+        opts.separator ''
+        opts.separator "Runs a sandboxed image from #{Settings::PATH}."
+        opts.separator 'Mounts the current directory unless volumes are given.'
+        opts.separator ''
 
-      opts.on('-a', '--all', "Build #{Builder::BASE_NAME}, then every other image") do
-        all = true
+        opts.on('-v', '--volume=DIR', "Mount a directory as #{Sandbox::MOUNT_ROOT}/<basename>, repeatable") do |dir|
+          volumes.push(dir)
+        end
+
+        opts.on('-w', '--workdir=NAME', "Start in #{Sandbox::MOUNT_ROOT}/<NAME>, the last volume by default") do |name|
+          workdir = name
+        end
+
+        opts.on('-p', '--publish=PORT', 'Publish a port as HOST:CONTAINER, PORT means PORT:PORT, repeatable') do |port|
+          ports.push(port)
+        end
+
+        opts.on('-l', '--list', 'Print image names') do
+          puts Settings.new.image_names if File.exist?(Settings::PATH)
+          exit(0)
+        end
+
+        help_option(opts)
+      end.parse!
+
+      raise Error, 'expected exactly one image' unless ARGV.length == 1
+
+      { image: ARGV.first, volumes: volumes, ports: ports, workdir: workdir }
+    end
+
+    def run(image:, **options)
+      Sandbox.new(image: Settings.new.image(image), **options).call
+    end
+  end
+
+  class BuildCommand
+    include Command
+
+    private
+
+    def parse
+      all = false
+
+      OptionParser.new do |opts|
+        opts.banner = 'Usage: sndbx build IMAGE | --all'
+        opts.separator ''
+        opts.separator "Builds an image from #{Builder::IMAGES_DIR_SETTING}/IMAGE, always without the docker cache."
+        opts.separator "Builds #{Builder::BASE_NAME} first if the image needs it and it doesn't exist yet."
+        opts.separator ''
+
+        opts.on('-a', '--all', "Build #{Builder::BASE_NAME}, then every other image") do
+          all = true
+        end
+
+        opts.on('-l', '--list', 'Print image names') do
+          puts Builder.new(Settings.new).image_names
+          exit(0)
+        end
+
+        help_option(opts)
+      end.parse!
+
+      raise Error, 'expected exactly one image, or --all' unless all ? ARGV.empty? : ARGV.length == 1
+
+      { image: ARGV.first }
+    end
+
+    def run(image:)
+      Builder.new(Settings.new).call(image: image)
+    end
+  end
+
+  class CLI
+    include Command
+
+    COMMANDS = { 'run' => RunCommand, 'build' => BuildCommand }.freeze
+
+    private
+
+    def parse
+      ARGV << '-h' if ARGV.empty?
+
+      parser = OptionParser.new do |opts|
+        opts.banner = 'Usage: sndbx command [options]'
+        opts.separator ''
+        opts.separator 'Commands:'
+        opts.separator '    run IMAGE      Run a sandboxed image'
+        opts.separator '    build IMAGE    Build an image'
+        opts.separator ''
+        opts.separator "Run 'sndbx command --help' for a command's options."
+        opts.separator ''
+
+        opts.on('-V', '--version', 'Print version') do
+          puts "sndbx #{VERSION}"
+          exit(0)
+        end
+
+        help_option(opts)
       end
 
-      opts.on('-l', '--list', 'Print image names') do
-        puts Builder.new(Settings.new).image_names
-        exit(0)
+      parser.order!
+      name = ARGV.shift
+
+      abort(parser.help) unless name
+      command = COMMANDS.fetch(name) { raise Error, "unknown command '#{name}', expected one of: #{COMMANDS.keys.join(', ')}" }
+
+      { command: command }
+    end
+
+    def run(command:)
+      command.new.call
+    end
+  end
+
+  class Settings
+    DIR = File.join(Dir.home, '.config', 'sndbx').freeze
+    PATH = File.join(DIR, 'settings.yml').freeze
+    HOME_ROOT = '/home'.freeze
+    DEFAULT_TAG_PREFIX = 'sndbx'.freeze
+    TAG_PREFIX_FORMAT = %r{\A[a-z0-9]+(?:[._/-][a-z0-9]+)*\z}.freeze
+
+    EXAMPLE = <<~YAML.freeze
+      # tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
+      images:
+        - name: claude
+          user: ubuntu
+          # tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
+          # config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
+          # config_target: .claude # optional, relative to the user's home, defaults to .<name>
+          # ports: ['3000'] # optional, always published; quote them, YAML reads 8080:22 as a number
+          # docker_args: ['--memory=8g'] # optional, extra docker run arguments
+      # images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to images/ next to bin/
+    YAML
+
+    def image(name)
+      image = images.find { |entry| entry['name'] == name }
+      raise Error, "unknown image '#{name}', expected one of: #{image_names.join(', ')}" unless image
+
+      raise Error, "image '#{name}' has no user in #{PATH}" unless image['user']
+
+      ports = Array(image['ports'])
+      ports.each do |port|
+        next if port.is_a?(String)
+
+        raise Error, "image '#{name}' has an unquoted port in #{PATH}, YAML read it as #{port.inspect}; quote it, e.g. \"3000\""
       end
 
-      help_option(opts)
-    end.parse!
+      docker_args = Array(image['docker_args'])
+      raise Error, "image '#{name}' has docker_args that aren't strings in #{PATH}" unless docker_args.all?(String)
 
-    abort('Error: expected exactly one image, or --all.') unless all ? ARGV.empty? : ARGV.length == 1
+      {
+        name: name,
+        tag: image['tag'] || "#{tag_prefix}:#{name}",
+        user: image['user'],
+        config_dir: File.expand_path(image['config_dir'] || File.join(DIR, name)),
+        config_target: File.join(HOME_ROOT, image['user'], image['config_target'] || ".#{name}"),
+        ports: ports,
+        docker_args: docker_args
+      }
+    end
 
-    { image: ARGV.first }
-  end
+    def image_names
+      images.map { |entry| entry['name'] }
+    end
 
-  def run(image:)
-    Builder.new(Settings.new).call(image: image)
-  end
-end
+    def tag_prefix
+      optional_setting('tag_prefix') || DEFAULT_TAG_PREFIX
+    end
 
-class SndbxCommand
-  include Command
+    # __dir__ resolves symlinks, so the default finds the repo when bin/sndbx is linked into PATH, but not when it's copied.
+    def images_dir
+      dir = optional_setting('images_dir')
+      return File.expand_path(dir, DIR) if dir
 
-  COMMANDS = { 'run' => RunCommand, 'build' => BuildCommand }.freeze
+      File.expand_path('../images', __dir__)
+    end
 
-  private
+    private
 
-  def parse
-    ARGV << '-h' if ARGV.empty?
+    def images
+      settings['images'] || []
+    end
 
-    parser = OptionParser.new do |opts|
-      opts.banner = 'Usage: sndbx command [options]'
-      opts.separator ''
-      opts.separator 'Commands:'
-      opts.separator '    run IMAGE      Run a sandboxed image'
-      opts.separator '    build IMAGE    Build an image'
-      opts.separator ''
-      opts.separator "Run 'sndbx command --help' for a command's options."
-      opts.separator ''
+    def optional_setting(key)
+      settings[key] if File.exist?(PATH)
+    end
 
-      opts.on('-V', '--version', 'Print version') do
-        puts "sndbx #{VERSION}"
-        exit(0)
+    def settings
+      @settings ||= validate(load)
+    end
+
+    def validate(settings)
+      raise Error, "invalid #{PATH}: expected a mapping with an images list" unless settings.is_a?(Hash)
+
+      prefix = settings['tag_prefix']
+      unless prefix.nil? || (prefix.is_a?(String) && prefix.match?(TAG_PREFIX_FORMAT))
+        raise Error, "invalid #{PATH}: tag_prefix must be a lowercase image name, e.g. sndbx"
       end
 
-      help_option(opts)
+      images_dir = settings['images_dir']
+      raise Error, "invalid #{PATH}: images_dir must be a path" unless images_dir.nil? || images_dir.is_a?(String)
+
+      images = settings['images'] || []
+      raise Error, "invalid #{PATH}: images must be a list" unless images.is_a?(Array)
+
+      images.each.with_index(1) do |entry, number|
+        next if entry.is_a?(Hash) && entry['name'].is_a?(String)
+
+        raise Error, "invalid #{PATH}: image #{number} must be a mapping with a name"
+      end
+
+      settings
     end
 
-    parser.order!
-    name = ARGV.shift
+    def load
+      create_example unless File.exist?(PATH)
 
-    abort(parser.help) unless name
-    command = COMMANDS.fetch(name) { abort("Error: unknown command '#{name}', expected one of: #{COMMANDS.keys.join(', ')}.") }
+      YAML.safe_load_file(PATH) || {}
+    rescue Psych::Exception => e
+      raise Error, "invalid #{PATH}: #{e.message}"
+    end
 
-    { command: command }
+    def create_example
+      FileUtils.mkdir_p(DIR)
+      File.write(PATH, EXAMPLE)
+
+      abort("Created an example config at #{PATH}, edit it and run again.")
+    end
   end
 
-  def run(command:)
-    command.new.call
+  class Builder
+    include Docker
+
+    BASE_NAME = 'base'.freeze
+    BASE_FROM_FORMAT = /^FROM\s+\$\{TAG_PREFIX\}:#{BASE_NAME}(?:\s|$)/.freeze
+    IMAGES_DIR_SETTING = 'images_dir'.freeze
+
+    def initialize(settings)
+      @tag_prefix = settings.tag_prefix
+      @images_dir = settings.images_dir
+    end
+
+    def image_names
+      check_images_dir
+      Dir.glob('*/Dockerfile', base: @images_dir).map { |path| File.dirname(path) }.sort
+    end
+
+    def call(image:)
+      names = image_names
+      raise Error, "unknown image '#{image}', expected one of: #{names.join(', ')}" unless image.nil? || names.include?(image)
+
+      check_docker
+
+      if image
+        build_with_base(image)
+      else
+        [BASE_NAME, *(names - [BASE_NAME])].each { |name| build_with_base(name) }
+      end
+    end
+
+    private
+
+    def build_with_base(name)
+      if name != BASE_NAME && needs_base?(name) && !base_exists?
+        puts "==> #{tag_for(BASE_NAME)} doesn't exist yet"
+        build(BASE_NAME)
+      end
+
+      build(name)
+    end
+
+    def build(name)
+      tag = tag_for(name)
+
+      # Only images FROM ${TAG_PREFIX}:base declare the arg, docker warns about unused ones.
+      args = needs_base?(name) ? ['--build-arg', "TAG_PREFIX=#{@tag_prefix}"] : []
+
+      puts "==> Building #{tag} from #{image_dir(name)}"
+      raise Error, "failed to build #{tag}" unless system(DOCKER, 'build', '--no-cache', *args, '-t', tag, image_dir(name))
+    end
+
+    def needs_base?(name)
+      File.read(File.join(image_dir(name), 'Dockerfile')).match?(BASE_FROM_FORMAT)
+    end
+
+    def base_exists?
+      image_exists?(tag_for(BASE_NAME))
+    end
+
+    def tag_for(name)
+      "#{@tag_prefix}:#{name}"
+    end
+
+    def image_dir(name)
+      File.join(@images_dir, name)
+    end
+
+    def check_images_dir
+      return if File.directory?(@images_dir)
+
+      raise Error, "images directory #{@images_dir} does not exist, set #{IMAGES_DIR_SETTING} in #{Settings::PATH}"
+    end
+  end
+
+  class Sandbox
+    include Docker
+
+    RUN_OPTIONS = ['run', '--rm', '-it'].freeze
+    MOUNT_ROOT = '/workspace'.freeze
+    PORT_FORMAT = %r{\A(?:[\d.]+:)?\d+(?::\d+)?(?:/(?:tcp|udp))?\z}.freeze
+    BARE_PORT_FORMAT = %r{\A(\d+)(/(?:tcp|udp))?\z}.freeze
+    MAX_PORT = 65_535
+    FORBIDDEN_DIRS = [Dir.home, '/'].freeze
+
+    def initialize(image:, volumes:, ports:, workdir:)
+      @image = image
+      @mounts = mounts(volumes.empty? ? [Dir.pwd] : volumes)
+      @ports = (image[:ports] + ports).map { |port| normalize_port(port) }.uniq
+      @workdir = workdir || @mounts.keys.last
+    end
+
+    def call
+      check_docker
+      check_image
+      check_workdir
+      FileUtils.mkdir_p(@image[:config_dir])
+
+      exec(DOCKER, *RUN_OPTIONS, "--workdir=#{mount_target(@workdir)}", *volume_args, *port_args, *@image[:docker_args], @image[:tag])
+    end
+
+    private
+
+    def mounts(volumes)
+      volumes.each_with_object({}) do |volume, mounts|
+        path = File.expand_path(volume)
+        name = File.basename(path)
+
+        raise Error, "#{path} is not a directory" unless File.directory?(path)
+        raise Error, "refusing to mount #{path}" if FORBIDDEN_DIRS.any? { |dir| File.identical?(dir, path) }
+        raise Error, "more than one volume is named '#{name}'" if mounts.key?(name)
+
+        mounts[name] = path
+      end
+    end
+
+    def volume_args
+      @mounts
+        .map { |name, path| "#{path}:#{mount_target(name)}" }
+        .push("#{@image[:config_dir]}:#{@image[:config_target]}")
+        .flat_map { |volume| ['-v', volume] }
+    end
+
+    def normalize_port(port)
+      raise Error, "invalid port '#{port}', expected PORT or HOST:CONTAINER" unless port.match?(PORT_FORMAT)
+      raise Error, "invalid port '#{port}', ports go up to #{MAX_PORT}" if port_numbers(port).any? { |number| number > MAX_PORT }
+
+      port.sub(BARE_PORT_FORMAT, '\\1:\\1\\2')
+    end
+
+    def port_numbers(port)
+      port.sub(%r{/.*\z}, '').split(':').last(2).map(&:to_i)
+    end
+
+    def port_args
+      @ports.flat_map { |port| ['-p', port] }
+    end
+
+    def mount_target(name)
+      File.join(MOUNT_ROOT, name)
+    end
+
+    def check_image
+      raise Error, "docker image '#{@image[:tag]}' does not exist" unless image_exists?(@image[:tag])
+    end
+
+    def check_workdir
+      return if @mounts.key?(@workdir)
+
+      raise Error, "workdir '#{@workdir}' is not a volume, expected one of: #{@mounts.keys.join(', ')}"
+    end
   end
 end
 
-class Settings
-  DIR = File.join(Dir.home, '.config', 'sndbx').freeze
-  PATH = File.join(DIR, 'settings.yml').freeze
-  HOME_ROOT = '/home'.freeze
-  DEFAULT_TAG_PREFIX = 'sndbx'.freeze
-  TAG_PREFIX_FORMAT = %r{\A[a-z0-9]+(?:[._/-][a-z0-9]+)*\z}.freeze
-
-  EXAMPLE = <<~YAML.freeze
-    # tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
-    images:
-      - name: claude
-        user: ubuntu
-        # tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
-        # config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
-        # config_target: .claude # optional, relative to the user's home, defaults to .<name>
-        # ports: ['3000'] # optional, always published; quote them, YAML reads 8080:22 as a number
-        # docker_args: ['--memory=8g'] # optional, extra docker run arguments
-    # images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to images/ next to bin/
-  YAML
-
-  def image(name)
-    image = images.find { |entry| entry['name'] == name }
-    abort("Error: unknown image '#{name}', expected one of: #{image_names.join(', ')}.") unless image
-
-    abort("Error: image '#{name}' has no user in #{PATH}.") unless image['user']
-
-    ports = Array(image['ports'])
-    ports.each do |port|
-      next if port.is_a?(String)
-
-      abort("Error: image '#{name}' has an unquoted port in #{PATH}, YAML read it as #{port.inspect}; quote it, e.g. \"3000\".")
-    end
-
-    docker_args = Array(image['docker_args'])
-    abort("Error: image '#{name}' has docker_args that aren't strings in #{PATH}.") unless docker_args.all?(String)
-
-    {
-      name: name,
-      tag: image['tag'] || "#{tag_prefix}:#{name}",
-      user: image['user'],
-      config_dir: File.expand_path(image['config_dir'] || File.join(DIR, name)),
-      config_target: File.join(HOME_ROOT, image['user'], image['config_target'] || ".#{name}"),
-      ports: ports,
-      docker_args: docker_args
-    }
-  end
-
-  def image_names
-    images.map { |entry| entry['name'] }
-  end
-
-  def tag_prefix
-    optional_setting('tag_prefix') || DEFAULT_TAG_PREFIX
-  end
-
-  # __dir__ resolves symlinks, so the default finds the repo when bin/sndbx is linked into PATH, but not when it's copied.
-  def images_dir
-    dir = optional_setting('images_dir')
-    return File.expand_path(dir, DIR) if dir
-
-    File.expand_path('../images', __dir__)
-  end
-
-  private
-
-  def images
-    settings['images'] || []
-  end
-
-  def optional_setting(key)
-    settings[key] if File.exist?(PATH)
-  end
-
-  def settings
-    @settings ||= validate(load)
-  end
-
-  def validate(settings)
-    abort("Error: invalid #{PATH}: expected a mapping with an images list.") unless settings.is_a?(Hash)
-
-    prefix = settings['tag_prefix']
-    unless prefix.nil? || (prefix.is_a?(String) && prefix.match?(TAG_PREFIX_FORMAT))
-      abort("Error: invalid #{PATH}: tag_prefix must be a lowercase image name, e.g. sndbx.")
-    end
-
-    images_dir = settings['images_dir']
-    abort("Error: invalid #{PATH}: images_dir must be a path.") unless images_dir.nil? || images_dir.is_a?(String)
-
-    images = settings['images'] || []
-    abort("Error: invalid #{PATH}: images must be a list.") unless images.is_a?(Array)
-
-    images.each.with_index(1) do |entry, number|
-      next if entry.is_a?(Hash) && entry['name'].is_a?(String)
-
-      abort("Error: invalid #{PATH}: image #{number} must be a mapping with a name.")
-    end
-
-    settings
-  end
-
-  def load
-    create_example unless File.exist?(PATH)
-
-    YAML.safe_load_file(PATH) || {}
-  rescue Psych::Exception => e
-    abort("Error: invalid #{PATH}: #{e.message}.")
-  end
-
-  def create_example
-    FileUtils.mkdir_p(DIR)
-    File.write(PATH, EXAMPLE)
-
-    abort("Created an example config at #{PATH}, edit it and run again.")
-  end
+begin
+  Sndbx::CLI.new.call
+rescue Sndbx::Error, OptionParser::ParseError => e
+  abort("Error: #{e.message}.")
 end
-
-class Builder
-  include Docker
-
-  BASE_NAME = 'base'.freeze
-  BASE_FROM_FORMAT = /^FROM\s+\$\{TAG_PREFIX\}:#{BASE_NAME}(?:\s|$)/.freeze
-  IMAGES_DIR_SETTING = 'images_dir'.freeze
-
-  def initialize(settings)
-    @tag_prefix = settings.tag_prefix
-    @images_dir = settings.images_dir
-  end
-
-  def image_names
-    check_images_dir
-    Dir.glob('*/Dockerfile', base: @images_dir).map { |path| File.dirname(path) }.sort
-  end
-
-  def call(image:)
-    names = image_names
-    abort("Error: unknown image '#{image}', expected one of: #{names.join(', ')}.") unless image.nil? || names.include?(image)
-
-    check_docker
-
-    if image
-      build_with_base(image)
-    else
-      [BASE_NAME, *(names - [BASE_NAME])].each { |name| build_with_base(name) }
-    end
-  end
-
-  private
-
-  def build_with_base(name)
-    if name != BASE_NAME && needs_base?(name) && !base_exists?
-      puts "==> #{tag_for(BASE_NAME)} doesn't exist yet"
-      build(BASE_NAME)
-    end
-
-    build(name)
-  end
-
-  def build(name)
-    tag = tag_for(name)
-
-    # Only images FROM ${TAG_PREFIX}:base declare the arg, docker warns about unused ones.
-    args = needs_base?(name) ? ['--build-arg', "TAG_PREFIX=#{@tag_prefix}"] : []
-
-    puts "==> Building #{tag} from #{image_dir(name)}"
-    abort("Error: failed to build #{tag}.") unless system(DOCKER, 'build', '--no-cache', *args, '-t', tag, image_dir(name))
-  end
-
-  def needs_base?(name)
-    File.read(File.join(image_dir(name), 'Dockerfile')).match?(BASE_FROM_FORMAT)
-  end
-
-  def base_exists?
-    image_exists?(tag_for(BASE_NAME))
-  end
-
-  def tag_for(name)
-    "#{@tag_prefix}:#{name}"
-  end
-
-  def image_dir(name)
-    File.join(@images_dir, name)
-  end
-
-  def check_images_dir
-    return if File.directory?(@images_dir)
-
-    abort("Error: images directory #{@images_dir} does not exist, set #{IMAGES_DIR_SETTING} in #{Settings::PATH}.")
-  end
-end
-
-class Sandbox
-  include Docker
-
-  RUN_OPTIONS = ['run', '--rm', '-it'].freeze
-  MOUNT_ROOT = '/workspace'.freeze
-  PORT_FORMAT = %r{\A(?:[\d.]+:)?\d+(?::\d+)?(?:/(?:tcp|udp))?\z}.freeze
-  BARE_PORT_FORMAT = %r{\A(\d+)(/(?:tcp|udp))?\z}.freeze
-  MAX_PORT = 65_535
-  FORBIDDEN_DIRS = [Dir.home, '/'].freeze
-
-  def initialize(image:, volumes:, ports:, workdir:)
-    @image = image
-    @mounts = mounts(volumes.empty? ? [Dir.pwd] : volumes)
-    @ports = (image[:ports] + ports).map { |port| normalize_port(port) }.uniq
-    @workdir = workdir || @mounts.keys.last
-  end
-
-  def call
-    check_docker
-    check_image
-    check_workdir
-    FileUtils.mkdir_p(@image[:config_dir])
-
-    exec(DOCKER, *RUN_OPTIONS, "--workdir=#{mount_target(@workdir)}", *volume_args, *port_args, *@image[:docker_args], @image[:tag])
-  end
-
-  private
-
-  def mounts(volumes)
-    volumes.each_with_object({}) do |volume, mounts|
-      path = File.expand_path(volume)
-      name = File.basename(path)
-
-      abort("Error: #{path} is not a directory.") unless File.directory?(path)
-      abort("Error: refusing to mount #{path}.") if FORBIDDEN_DIRS.any? { |dir| File.identical?(dir, path) }
-      abort("Error: more than one volume is named '#{name}'.") if mounts.key?(name)
-
-      mounts[name] = path
-    end
-  end
-
-  def volume_args
-    @mounts
-      .map { |name, path| "#{path}:#{mount_target(name)}" }
-      .push("#{@image[:config_dir]}:#{@image[:config_target]}")
-      .flat_map { |volume| ['-v', volume] }
-  end
-
-  def normalize_port(port)
-    abort("Error: invalid port '#{port}', expected PORT or HOST:CONTAINER.") unless port.match?(PORT_FORMAT)
-    abort("Error: invalid port '#{port}', ports go up to #{MAX_PORT}.") if port_numbers(port).any? { |number| number > MAX_PORT }
-
-    port.sub(BARE_PORT_FORMAT, '\\1:\\1\\2')
-  end
-
-  def port_numbers(port)
-    port.sub(%r{/.*\z}, '').split(':').last(2).map(&:to_i)
-  end
-
-  def port_args
-    @ports.flat_map { |port| ['-p', port] }
-  end
-
-  def mount_target(name)
-    File.join(MOUNT_ROOT, name)
-  end
-
-  def check_image
-    abort("Error: docker image '#{@image[:tag]}' does not exist.") unless image_exists?(@image[:tag])
-  end
-
-  def check_workdir
-    return if @mounts.key?(@workdir)
-
-    abort("Error: workdir '#{@workdir}' is not a volume, expected one of: #{@mounts.keys.join(', ')}.")
-  end
-end
-
-SndbxCommand.new.call
