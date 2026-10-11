@@ -14,9 +14,25 @@ class CompletionTest < Minitest::Test
     exit 0
   BASH
 
+  # Speaks docker's cobra completion protocol with the output in DOCKER_COMPLETIONS, fails like docker before 26 without it.
+  FAKE_DOCKER = <<~RUBY.freeze
+    #!#{RbConfig.ruby}
+    require 'json'
+
+    File.write(ENV.fetch('DOCKER_LOG'), "\#{ARGV.to_json}\\n", mode: 'a')
+    output = ENV.fetch('DOCKER_COMPLETIONS')
+    exit(1) unless File.exist?(output)
+
+    print(File.read(output))
+  RUBY
+
   def setup
     super
+    @docker_log = File.join(@root, 'docker.log')
+    @docker_completions = File.join(@root, 'docker-completions')
+
     write_executable(File.join(@bin, 'sndbx'), "#!/bin/sh\nexec '#{RbConfig.ruby}' '#{BIN}' \"$@\"\n")
+    write_executable(File.join(@bin, 'docker'), FAKE_DOCKER)
   end
 
   def test_options_match_help
@@ -56,6 +72,62 @@ class CompletionTest < Minitest::Test
     assert_empty complete('run', '-v', 'src', ':')
     assert_empty complete('run', '-v', 'src', ':', '')
     assert_empty complete('run', '-v', 'src', ':', '/opt', ':', '')
+  end
+
+  def test_docker_args_complete_with_docker
+    write_docker_completions("--memory\tMemory limit\n--memory-swap\n:4\n")
+
+    assert_equal %w[--memory --memory-swap], complete('run', 'claude', '-v', '.', '--', '--init', '--mem')
+    assert_equal [['__complete', 'run', '--init', '--mem']], docker_calls
+  end
+
+  def test_docker_args_filter_candidates
+    write_docker_completions("bridge\nhost\nnone\n:4\n")
+
+    assert_equal %w[host], complete('run', 'claude', '--', '--network', 'h')
+  end
+
+  def test_docker_args_rejoin_equals_signs_and_colons
+    write_docker_completions("src:/opt\nsrc:/srv\nother:/opt\n:0\n")
+
+    assert_equal %w[/opt /srv], complete('run', 'claude', '--', '--volume', '=', 'src', ':', '/')
+    assert_equal %w[:/opt :/srv], complete('run', 'claude', '--', '-v', 'src', ':')
+    assert_equal [['__complete', 'run', '--volume=src:/'], ['__complete', 'run', '-v', 'src:']], docker_calls
+  end
+
+  def test_docker_args_without_candidates_complete_files
+    write_docker_completions(":0\n")
+    File.write(File.join(@work, 'env'), '')
+    mkdir('work/project/src')
+
+    assert_equal %w[env src], complete('run', 'claude', '--', '--env-file', '=', '')
+  end
+
+  def test_docker_args_complete_directories_when_docker_says_so
+    write_docker_completions(":16\n")
+    File.write(File.join(@work, 'env'), '')
+    mkdir('work/project/src')
+
+    assert_equal %w[src], complete('run', 'claude', '--', '--workdir', '')
+  end
+
+  def test_docker_args_without_file_completion
+    write_docker_completions(":4\n")
+    File.write(File.join(@work, 'env'), '')
+
+    assert_empty complete('run', 'claude', '--', '-e', '')
+  end
+
+  def test_docker_args_after_a_docker_error
+    write_docker_completions("--memory\n:1\n")
+
+    assert_empty complete('run', 'claude', '--', '-')
+  end
+
+  def test_docker_args_complete_files_with_old_docker
+    File.write(File.join(@work, 'env'), '')
+
+    assert_equal %w[env], complete('run', 'claude', '--', '--env-file', '')
   end
 
   def test_run_no_image_after_image
@@ -112,6 +184,12 @@ class CompletionTest < Minitest::Test
     assert_equal %w[/opt/sdk backend], complete('run', '-v', '"../sdk:/opt/sdk"', '-v', "#{api}:/workspace/backend", '-w', '')
   end
 
+  def test_workdir_completes_the_workspace_root
+    api = mkdir('work/api')
+
+    assert_equal %w[/workspace], complete('run', '-v', api, ':', '/workspace', '-w', '')
+  end
+
   def test_workdir_skips_missing_volumes
     api = mkdir('work/api')
 
@@ -128,7 +206,8 @@ class CompletionTest < Minitest::Test
   private
 
   def complete(*words)
-    env = { 'HOME' => @home, 'PATH' => "#{@bin}:#{ENV.fetch('PATH')}", 'COMPLETION' => COMPLETION }
+    env = { 'HOME' => @home, 'PATH' => "#{@bin}:#{ENV.fetch('PATH')}", 'COMPLETION' => COMPLETION,
+            'DOCKER_LOG' => @docker_log, 'DOCKER_COMPLETIONS' => @docker_completions }
     out, status = Open3.capture2(env, 'bash', '-c', COMPLETE, 'bash', *words, chdir: @work)
     assert_predicate status, :success?
 
@@ -141,6 +220,14 @@ class CompletionTest < Minitest::Test
                          .select { |line| line.start_with?('-') }
                          .flat_map { |line| line.split(/\s{2,}/).first.scan(/-[-\w]+/) }
                          .sort
+  end
+
+  def write_docker_completions(output)
+    File.write(@docker_completions, output)
+  end
+
+  def docker_calls
+    File.readlines(@docker_log).map { |line| JSON.parse(line) }
   end
 
   def write_images_settings

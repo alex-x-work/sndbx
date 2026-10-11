@@ -1,5 +1,68 @@
 #!/bin/bash
 
+# Completes the docker run arguments from word $1 on with docker's own completion, files if docker has none
+_sndbx_docker_args() {
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local lead="" token prefix line directive=-1 i
+  local -a args=() lines=() candidates=()
+
+  # Rejoin the words bash split at = and :, docker completes them whole
+  for (( i = $1; i <= COMP_CWORD; i++ )); do
+    if (( i > $1 )) && [[ "${COMP_WORDS[i]}" == [=:] || "${COMP_WORDS[i-1]}" == [=:] ]]; then
+      args[-1]+="${COMP_WORDS[i]}"
+    else
+      args+=("${COMP_WORDS[i]}")
+    fi
+  done
+
+  # Docker 26+ prints one candidate per line, optionally followed by a tab and a description, then :DIRECTIVE
+  mapfile -t lines < <(docker __complete run "${args[@]}" 2>/dev/null)
+  if (( ${#lines[@]} )) && [[ "${lines[-1]}" =~ ^:([0-9]+)$ ]]; then
+    directive="${BASH_REMATCH[1]}"
+    unset 'lines[-1]'
+  fi
+
+  # 1: error
+  if (( directive > 0 && directive & 1 )); then
+    COMPREPLY=()
+    return 0
+  fi
+
+  # Bash replaces only the word after the last = or :, so drop what comes before it from the candidates
+  if [[ "${cur}" == [=:] ]]; then
+    lead="${cur}"
+    cur=""
+  fi
+  token="${args[-1]}"
+  [[ "${token}" == -*=* ]] && token="${token#*=}"
+  prefix=""
+  [[ "${token}" == *:* ]] && prefix="${token%:*}:"
+
+  for line in "${lines[@]}"; do
+    line="${line%%$'\t'*}"
+    [[ "${line}" == "${prefix}${cur}"* ]] && candidates+=("${lead}${line#"${prefix}"}")
+  done
+
+  if (( ${#candidates[@]} )); then
+    COMPREPLY=("${candidates[@]}")
+  elif (( directive > 0 && directive & 4 )); then
+    # 4: no file completion
+    COMPREPLY=()
+  else
+    # 16: directories only
+    compopt -o filenames
+    if (( directive > 0 && directive & 16 )); then
+      mapfile -t COMPREPLY < <(compgen -d -P "${lead}" -- "${cur}")
+    else
+      mapfile -t COMPREPLY < <(compgen -f -P "${lead}" -- "${cur}")
+    fi
+  fi
+
+  # 2: no space after the completion
+  (( directive > 0 && directive & 2 )) && compopt -o nospace
+  return 0
+}
+
 _sndbx() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
@@ -14,6 +77,16 @@ _sndbx() {
       mapfile -t COMPREPLY < <(compgen -W 'run build' -- "${cur}")
     fi
     return 0
+  fi
+
+  # Everything after -- goes to docker run
+  if [[ "${command}" == run ]]; then
+    for (( i = 2; i < COMP_CWORD; i++ )); do
+      if [[ "${COMP_WORDS[i]}" == -- ]]; then
+        _sndbx_docker_args $(( i + 1 ))
+        return 0
+      fi
+    done
   fi
 
   # Bash splits --volume=SRC:DST into "--volume" "=" "SRC" ":" "DST", nothing completes DST or the rest

@@ -43,7 +43,7 @@ class SndbxTest < Minitest::Test
   end
 
   def test_run_help
-    assert_help 'Usage: sndbx run IMAGE [options]', sndbx('run', '-h')
+    assert_help 'Usage: sndbx run IMAGE [options] [-- DOCKER_ARGS]', sndbx('run', '-h')
   end
 
   def test_build_help
@@ -233,6 +233,41 @@ class SndbxTest < Minitest::Test
                  sndbx('run', 'claude', '-v', 'notes.txt:/notes.txt', '-w', '/notes.txt')
   end
 
+  def test_run_with_volume_at_the_workspace_root
+    write_claude_settings
+    api = mkdir('work/api')
+
+    sndbx('run', 'claude', '-v', "#{api}:/workspace", '-v', '.:/opt/project')
+
+    assert_equal ['run', '--rm', '-it', '--workdir=/workspace', '-v', "#{api}:/workspace", '-v', "#{@work}:/opt/project",
+                  *config_volume, 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_workdir_at_the_workspace_root
+    write_claude_settings
+
+    assert_error "workdir 'api' is not a directory volume, expected one of: /workspace",
+                 sndbx('run', 'claude', '-v', '.:/workspace', '-w', 'api')
+  end
+
+  def test_run_starts_in_a_directory_volume_outside_the_workspace_without_one_inside
+    write_claude_settings
+    sdk = mkdir('work/sdk')
+    File.write(File.join(@work, 'notes.txt'), '')
+
+    sndbx('run', 'claude', '-v', 'notes.txt:/workspace/notes.txt', '-v', "#{sdk}:/opt/sdk")
+
+    assert_includes docker_calls.last, '--workdir=/opt/sdk'
+  end
+
+  def test_run_needs_a_directory_volume
+    write_claude_settings
+    File.write(File.join(@work, 'notes.txt'), '')
+
+    assert_error 'no directory volume to start in', sndbx('run', 'claude', '-v', 'notes.txt:/workspace/notes.txt')
+  end
+
   def test_volume_without_target_must_be_a_directory
     write_claude_settings
     File.write(File.join(@work, 'notes.txt'), '')
@@ -272,6 +307,12 @@ class SndbxTest < Minitest::Test
     write_claude_settings
 
     assert_error "refusing to mount #{@home}", sndbx('run', 'claude', '-v', @home)
+  end
+
+  def test_refuses_to_mount_home_with_a_target
+    write_claude_settings
+
+    assert_error "refusing to mount #{@home}", sndbx('run', 'claude', '-v', '~:/home/ubuntu/host')
   end
 
   def test_refuses_to_mount_a_link_to_home
@@ -337,6 +378,33 @@ class SndbxTest < Minitest::Test
                   '-v', "#{File.join(@root, 'claude-config')}:/home/dev/.config/claude",
                   '--memory=8g', '--init', 'mine:claude'],
                  docker_calls.last
+  end
+
+  def test_run_passes_its_own_options_after_the_separator_to_docker
+    write_claude_settings
+
+    sndbx('run', 'claude', '--', '-v', '/tmp:/tmp', '-p', '3000', '-w', '/tmp')
+
+    assert_equal [*run_options('project'), *volume('project'), *config_volume, '-v', '/tmp:/tmp', '-p', '3000', '-w', '/tmp',
+                  'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_passes_docker_args_after_the_image_ones
+    write_settings(images: [{ name: 'claude', user: 'ubuntu', docker_args: ['--memory=8g'] }])
+    add_docker_image('sndbx:claude')
+
+    sndbx('run', 'claude', '-v', '.', '--', '--memory=16g', '-e', 'FOO=bar')
+
+    assert_equal [*run_options('project'), *volume('project'), *config_volume,
+                  '--memory=8g', '--memory=16g', '-e', 'FOO=bar', 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_takes_the_image_before_docker_args
+    write_claude_settings
+
+    assert_error 'expected exactly one image', sndbx('run', '--', 'claude')
   end
 
   def test_run_uses_image_tag

@@ -47,6 +47,7 @@ FROM ${TAG_PREFIX}:base
 - mounts the current directory at `/workspace/<basename>` unless a volume is mounted in `/workspace`
 - mounts the image's config directory at `/home/<user>/<config_target>`
 - publishes the image's `ports` plus each `-p PORT`
+- passes the image's `docker_args` plus everything after `--` to `docker run`
 
 ### Install
 
@@ -58,6 +59,8 @@ source /path/to/sndbx/completions/_sndbx
 ```
 
 A copy of `bin/sndbx` works too, but `sndbx build` then needs `images_dir` in the settings.
+
+The completions complete arguments after `--` with docker's own completion, `docker __complete run`, and fall back to file names when docker doesn't have it.
 
 ### Configure
 
@@ -92,6 +95,7 @@ sndbx run claude -v ../api -v ../web                  # mount several, start in 
 sndbx run claude -v ../api -v ../web -w api           # mount several, start in api
 sndbx run claude -v ./garmin/sdk:/opt/garmin/sdk:ro   # also mount a read-only SDK, still start in the current directory
 sndbx run claude -p 3000 -p 8080:80                   # publish ports, 3000 means 3000:3000
+sndbx run claude -- --memory=8g -e FOO=bar            # pass extra arguments to docker run
 sndbx run --list                                      # print configured image names
 sndbx --version
 ```

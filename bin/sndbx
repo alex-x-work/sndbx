@@ -5,7 +5,7 @@ require 'optparse'
 require 'yaml'
 
 module Sndbx
-  VERSION = '0.12.0'.freeze
+  VERSION = '0.14.0'.freeze
 
   class Error < StandardError; end
 
@@ -52,12 +52,15 @@ module Sndbx
       volumes = []
       ports = []
       workdir = nil
+      separator = ARGV.index('--')
+      docker_args = separator ? ARGV.slice!(separator..).drop(1) : []
 
       OptionParser.new do |opts|
-        opts.banner = 'Usage: sndbx run IMAGE [options]'
+        opts.banner = 'Usage: sndbx run IMAGE [options] [-- DOCKER_ARGS]'
         opts.separator ''
         opts.separator "Runs a sandboxed image from #{Settings::PATH}."
         opts.separator "Mounts the current directory unless a volume is mounted in #{Sandbox::MOUNT_ROOT}."
+        opts.separator "Passes DOCKER_ARGS to docker run after the image's docker_args."
         opts.separator ''
 
         opts.on('-v', '--volume=SRC[:DST[:OPTS]]',
@@ -85,7 +88,7 @@ module Sndbx
 
       raise Error, 'expected exactly one image' unless ARGV.length == 1
 
-      { image: ARGV.first, volumes: volumes, ports: ports, workdir: workdir }
+      { image: ARGV.first, volumes: volumes, ports: ports, workdir: workdir, docker_args: docker_args }
     end
 
     def run(image:, **options)
@@ -373,8 +376,9 @@ module Sndbx
     VOLUME_FORMAT = /\A([^:]+)(?::([^:]+))?(?::([^:]+))?\z/.freeze
     FORBIDDEN_DIRS = [Dir.home, '/'].freeze
 
-    def initialize(image:, volumes:, ports:, workdir:)
+    def initialize(image:, volumes:, ports:, workdir:, docker_args:)
       @image = image
+      @docker_args = image[:docker_args] + docker_args
       @volumes = volumes(volumes)
       @ports = (image[:ports] + ports).map { |port| normalize_port(port) }.uniq
       @workdir = workdir ? workdir_target(workdir) : default_workdir
@@ -386,7 +390,7 @@ module Sndbx
       check_workdir
       FileUtils.mkdir_p(@image[:config_dir])
 
-      exec(DOCKER, *RUN_OPTIONS, "--workdir=#{@workdir}", *volume_args, *port_args, *@image[:docker_args], @image[:tag])
+      exec(DOCKER, *RUN_OPTIONS, "--workdir=#{@workdir}", *volume_args, *port_args, *@docker_args, @image[:tag])
     end
 
     private
