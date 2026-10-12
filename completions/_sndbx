@@ -63,6 +63,46 @@ _sndbx_docker_args() {
   return 0
 }
 
+# Completes the image, then its running containers, and nothing from COMMAND on
+_sndbx_exec() {
+  local -a positionals=()
+  local options_done=0 list=0 i
+
+  # Count the positionals before the current word, skipping option values; COMMAND, the third, ends the options
+  for (( i = 2; i < COMP_CWORD; i++ )); do
+    if (( options_done )); then
+      positionals+=("${COMP_WORDS[i]}")
+      continue
+    fi
+
+    case "${COMP_WORDS[i]}" in
+      -u|--user)
+        (( i++ ))
+        [[ "${COMP_WORDS[i]}" == "=" ]] && (( i++ ))
+        ;;
+      --) options_done=1 ;;
+      -l|--list) list=1 ;;
+      -*) ;;
+      *) positionals+=("${COMP_WORDS[i]}") ;;
+    esac
+    (( ${#positionals[@]} >= 3 )) && break
+  done
+
+  if (( ${#positionals[@]} >= 3 )) || (( list && ${#positionals[@]} >= 1 )); then
+    COMPREPLY=()
+  elif [[ "${prev}" == -u || "${prev}" == --user ]]; then
+    COMPREPLY=()
+  elif [[ "${cur}" == -* ]] && (( ! options_done )); then
+    mapfile -t COMPREPLY < <(compgen -W '-u --user -l --list -h --help' -- "${cur}")
+  elif (( ${#positionals[@]} == 0 )); then
+    mapfile -t COMPREPLY < <(compgen -W "$(sndbx run --list 2>/dev/null)" -- "${cur}")
+  elif (( ${#positionals[@]} == 1 )); then
+    mapfile -t COMPREPLY < <(compgen -W "$(sndbx exec "${positionals[0]}" --list 2>/dev/null)" -- "${cur}")
+  else
+    COMPREPLY=()
+  fi
+}
+
 _sndbx() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
@@ -74,7 +114,7 @@ _sndbx() {
     if [[ "${cur}" == -* ]]; then
       mapfile -t COMPREPLY < <(compgen -W '-V --version -h --help' -- "${cur}")
     else
-      mapfile -t COMPREPLY < <(compgen -W 'run build' -- "${cur}")
+      mapfile -t COMPREPLY < <(compgen -W 'run build exec' -- "${cur}")
     fi
     return 0
   fi
@@ -98,6 +138,11 @@ _sndbx() {
     cur=""
   elif [[ "${prev}" == "=" ]]; then
     prev="${COMP_WORDS[COMP_CWORD-2]}"
+  fi
+
+  if [[ "${command}" == exec ]]; then
+    _sndbx_exec
+    return 0
   fi
 
   # Look for an image and volumes given after the command and before the current word, skipping option values

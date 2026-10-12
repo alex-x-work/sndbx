@@ -48,6 +48,7 @@ FROM ${TAG_PREFIX}:base
 - mounts the image's config directory at `/home/<user>/<config_target>`
 - publishes the image's `ports` plus each `-p PORT`
 - passes the image's `docker_args` plus everything after `--` to `docker run`
+- labels the container `sndbx.image=<name>`, which `sndbx exec` finds it by
 
 ### Install
 
@@ -97,8 +98,13 @@ sndbx run claude -v ./garmin/sdk:/opt/garmin/sdk:ro   # also mount a read-only S
 sndbx run claude -p 3000 -p 8080:80                   # publish ports, 3000 means 3000:3000
 sndbx run claude -- --memory=8g -e FOO=bar            # pass extra arguments to docker run
 sndbx run --list                                      # print configured image names
+sndbx exec claude gifted_mcnulty bash                 # run a command in a running claude sandbox, like docker exec -it
+sndbx exec -u root claude gifted_mcnulty bash         # as root
+sndbx exec claude --list                              # print the running claude sandboxes
 sndbx --version
 ```
+
+`sndbx exec` finds sandboxes by their `sndbx.image` label, so it doesn't see sandboxes started before sndbx 0.15.0. It passes `-t` to `docker exec` only when stdin is a terminal, so it works in pipes and scripts.
 
 ## Run with docker
 

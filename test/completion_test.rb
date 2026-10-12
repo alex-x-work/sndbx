@@ -20,6 +20,13 @@ class CompletionTest < Minitest::Test
     require 'json'
 
     File.write(ENV.fetch('DOCKER_LOG'), "\#{ARGV.to_json}\\n", mode: 'a')
+    exit if ARGV == ['info']
+    if ARGV.first == 'ps'
+      containers = ENV.fetch('DOCKER_CONTAINERS')
+      print(File.read(containers)) if File.exist?(containers)
+      exit
+    end
+
     output = ENV.fetch('DOCKER_COMPLETIONS')
     exit(1) unless File.exist?(output)
 
@@ -30,19 +37,20 @@ class CompletionTest < Minitest::Test
     super
     @docker_log = File.join(@root, 'docker.log')
     @docker_completions = File.join(@root, 'docker-completions')
+    @docker_containers = File.join(@root, 'docker-containers')
 
     write_executable(File.join(@bin, 'sndbx'), "#!/bin/sh\nexec '#{RbConfig.ruby}' '#{BIN}' \"$@\"\n")
     write_executable(File.join(@bin, 'docker'), FAKE_DOCKER)
   end
 
   def test_options_match_help
-    [[], ['run'], ['build']].each do |command|
+    [[], ['run'], ['build'], ['exec']].each do |command|
       assert_equal help_options(*command), complete(*command, '-'), "options of sndbx #{command.join(' ')}"
     end
   end
 
   def test_commands
-    assert_equal %w[build run], complete('')
+    assert_equal %w[build exec run], complete('')
     assert_equal %w[run], complete('r')
   end
 
@@ -151,6 +159,45 @@ class CompletionTest < Minitest::Test
     assert_empty complete('build', '--all', '')
   end
 
+  def test_exec_images
+    write_images_settings
+
+    assert_equal %w[claude codex], complete('exec', '')
+    assert_equal %w[claude codex], complete('exec', '-u', 'root', '')
+    assert_equal %w[claude codex], complete('exec', '--user', '=', 'root', '')
+  end
+
+  def test_exec_containers
+    write_images_settings
+    File.write(@docker_containers, "gifted_mcnulty\nquirky_hopper\n")
+
+    assert_equal %w[gifted_mcnulty quirky_hopper], complete('exec', 'claude', '')
+    assert_equal %w[quirky_hopper], complete('exec', '-u', 'root', 'claude', 'q')
+    assert_equal [['info'], ['ps', '--filter', 'label=sndbx.image=claude', '--format', '{{.Names}}']], docker_calls.last(2)
+  end
+
+  def test_exec_options_before_the_command
+    assert_equal %w[--user], complete('exec', 'claude', 'gifted_mcnulty', '--u')
+  end
+
+  def test_exec_completes_nothing_from_the_command_on
+    File.write(File.join(@work, 'README.md'), '')
+
+    assert_empty complete('exec', 'claude', 'gifted_mcnulty', '')
+    assert_empty complete('exec', 'claude', 'gifted_mcnulty', 'ls', '')
+    assert_empty complete('exec', 'claude', 'gifted_mcnulty', 'ls', '-')
+    assert_empty complete('exec', 'claude', 'gifted_mcnulty', '--', '-')
+    assert_empty complete('exec', '-u', '')
+  end
+
+  def test_exec_list_completes_nothing_after_the_image
+    write_images_settings
+
+    assert_empty complete('exec', 'claude', '--list', '')
+    assert_empty complete('exec', '-l', 'claude', '')
+    assert_equal %w[claude codex], complete('exec', '--list', '')
+  end
+
   def test_volume_completes_directories
     mkdir('work/project/src')
     File.write(File.join(@work, 'README.md'), '')
@@ -207,7 +254,8 @@ class CompletionTest < Minitest::Test
 
   def complete(*words)
     env = { 'HOME' => @home, 'PATH' => "#{@bin}:#{ENV.fetch('PATH')}", 'COMPLETION' => COMPLETION,
-            'DOCKER_LOG' => @docker_log, 'DOCKER_COMPLETIONS' => @docker_completions }
+            'DOCKER_LOG' => @docker_log, 'DOCKER_COMPLETIONS' => @docker_completions,
+            'DOCKER_CONTAINERS' => @docker_containers }
     out, status = Open3.capture2(env, 'bash', '-c', COMPLETE, 'bash', *words, chdir: @work)
     assert_predicate status, :success?
 

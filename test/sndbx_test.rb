@@ -1,4 +1,5 @@
 require_relative 'test_helper'
+require 'pty'
 
 class SndbxTest < Minitest::Test
   include SndbxTestHelper
@@ -12,12 +13,16 @@ class SndbxTest < Minitest::Test
     File.write(ENV.fetch('DOCKER_LOG'), "\#{ARGV.to_json}\\n", mode: 'a')
     images_path = ENV.fetch('DOCKER_IMAGES')
     images = File.exist?(images_path) ? File.readlines(images_path, chomp: true) : []
+    containers_path = ENV.fetch('DOCKER_CONTAINERS')
+    containers = File.exist?(containers_path) ? File.readlines(containers_path, chomp: true).map(&:split) : []
 
     case ARGV
     in ['info']
       exit(!ENV.key?('DOCKER_STOPPED'))
     in ['image', 'inspect', tag]
       exit(images.include?(tag))
+    in ['ps', '--filter', filter, '--format', '{{.Names}}']
+      containers.each { |image, name| puts name if filter == "label=sndbx.image=\#{image}" }
     in ['build', *, '-t', tag, _]
       exit(false) if ENV['DOCKER_BROKEN'] == tag
       File.write(images_path, "\#{tag}\\n", mode: 'a')
@@ -30,6 +35,7 @@ class SndbxTest < Minitest::Test
     @no_bin = mkdir('no-bin')
     @docker_log = File.join(@root, 'docker.log')
     @docker_images = File.join(@root, 'docker-images')
+    @docker_containers = File.join(@root, 'docker-containers')
 
     write_executable(File.join(@bin, 'docker'), FAKE_DOCKER)
   end
@@ -50,6 +56,10 @@ class SndbxTest < Minitest::Test
     assert_help 'Usage: sndbx build IMAGE | --all', sndbx('build', '--help')
   end
 
+  def test_exec_help
+    assert_help 'Usage: sndbx exec IMAGE CONTAINER COMMAND [ARGS] | IMAGE --list', sndbx('exec', '-h')
+  end
+
   def test_version
     result = sndbx('-V')
 
@@ -58,7 +68,7 @@ class SndbxTest < Minitest::Test
   end
 
   def test_unknown_command
-    assert_error "unknown command 'foo', expected one of: run, build", sndbx('foo')
+    assert_error "unknown command 'foo', expected one of: run, build, exec", sndbx('foo')
   end
 
   def test_invalid_option
@@ -239,7 +249,7 @@ class SndbxTest < Minitest::Test
 
     sndbx('run', 'claude', '-v', "#{api}:/workspace", '-v', '.:/opt/project')
 
-    assert_equal ['run', '--rm', '-it', '--workdir=/workspace', '-v', "#{api}:/workspace", '-v', "#{@work}:/opt/project",
+    assert_equal ['run', '--rm', '-it', '--label=sndbx.image=claude', '--workdir=/workspace', '-v', "#{api}:/workspace", '-v', "#{@work}:/opt/project",
                   *config_volume, 'sndbx:claude'],
                  docker_calls.last
   end
@@ -600,13 +610,129 @@ class SndbxTest < Minitest::Test
     assert_error 'expected exactly one image, or --all', sndbx('build', '--all', 'base')
   end
 
+  def test_exec
+    write_exec_settings
+
+    sndbx('exec', 'claude', 'gifted_mcnulty', 'bash')
+
+    assert_equal [['info'], ['ps', '--filter', 'label=sndbx.image=claude', '--format', '{{.Names}}'],
+                  ['exec', '-i', 'gifted_mcnulty', 'bash']],
+                 docker_calls
+  end
+
+  def test_exec_as_user
+    write_exec_settings
+
+    sndbx('exec', '-u', 'root', 'claude', 'gifted_mcnulty', 'bash')
+    sndbx('exec', 'claude', '--user=root', 'gifted_mcnulty', 'bash')
+    sndbx('exec', 'claude', 'gifted_mcnulty', '-u', 'root', 'bash')
+
+    assert_equal [['exec', '-i', '--user=root', 'gifted_mcnulty', 'bash']] * 3, docker_execs
+  end
+
+  def test_exec_passes_options_after_the_command_to_it
+    write_exec_settings
+
+    sndbx('exec', 'claude', 'gifted_mcnulty', 'ls', '-la', '-u', 'x', '--help', '--')
+
+    assert_equal [['exec', '-i', 'gifted_mcnulty', 'ls', '-la', '-u', 'x', '--help', '--']], docker_execs
+  end
+
+  def test_exec_with_a_terminal
+    write_exec_settings
+
+    PTY.spawn({ 'HOME' => @home, 'PATH' => @bin, 'DOCKER_LOG' => @docker_log, 'DOCKER_IMAGES' => @docker_images,
+                'DOCKER_CONTAINERS' => @docker_containers },
+              RbConfig.ruby, BIN, 'exec', 'claude', 'gifted_mcnulty', 'bash', chdir: @work) do |out, _in, pid|
+      begin
+        out.read
+      rescue Errno::EIO # the pty closes when sndbx exits
+      end
+      Process.wait(pid)
+    end
+
+    assert_equal [['exec', '-it', 'gifted_mcnulty', 'bash']], docker_execs
+  end
+
+  def test_exec_needs_a_nonempty_user
+    write_exec_settings
+
+    assert_error 'expected a user', sndbx('exec', '-u', '', 'claude', 'gifted_mcnulty', 'bash')
+    assert_error 'expected a user', sndbx('exec', '--user=', 'claude', 'gifted_mcnulty', 'bash')
+    refute File.exist?(@docker_log)
+  end
+
+  def test_exec_after_double_dash
+    write_exec_settings
+
+    sndbx('exec', 'claude', 'gifted_mcnulty', '--', '-weird')
+    sndbx('exec', '--', 'claude', 'gifted_mcnulty', 'bash')
+
+    assert_equal [['exec', '-i', 'gifted_mcnulty', '-weird'], ['exec', '-i', 'gifted_mcnulty', 'bash']], docker_execs
+  end
+
+  def test_exec_needs_an_image_a_container_and_a_command
+    write_exec_settings
+
+    assert_error 'expected an image, a container and a command', sndbx('exec')
+    assert_error 'expected an image, a container and a command', sndbx('exec', 'claude')
+    assert_error 'expected an image, a container and a command', sndbx('exec', 'claude', 'gifted_mcnulty')
+  end
+
+  def test_exec_unknown_image
+    write_exec_settings
+
+    assert_error "unknown image 'nope', expected one of: claude, codex", sndbx('exec', 'nope', 'gifted_mcnulty', 'bash')
+  end
+
+  def test_exec_container_of_another_image
+    write_exec_settings
+
+    assert_error "container 'eager_turing' is not a running claude sandbox, expected one of: gifted_mcnulty, quirky_hopper",
+                 sndbx('exec', 'claude', 'eager_turing', 'bash')
+    assert_empty docker_execs
+  end
+
+  def test_exec_without_running_containers
+    write_settings(images: [{ name: 'claude', user: 'ubuntu' }])
+
+    assert_error 'no running claude sandbox', sndbx('exec', 'claude', 'gifted_mcnulty', 'bash')
+  end
+
+  def test_exec_without_docker
+    write_exec_settings
+
+    assert_error 'docker is not installed', sndbx('exec', 'claude', 'gifted_mcnulty', 'bash', docker: false)
+  end
+
+  def test_exec_list
+    write_exec_settings
+
+    assert_equal "gifted_mcnulty\nquirky_hopper\n", sndbx('exec', 'claude', '--list').out
+    assert_equal "eager_turing\n", sndbx('exec', '-l', 'codex').out
+    assert_empty sndbx('exec', 'opencode', '--list').out
+  end
+
+  def test_exec_list_without_settings_does_not_create_them
+    add_docker_container('claude', 'gifted_mcnulty')
+
+    assert_equal "gifted_mcnulty\n", sndbx('exec', 'claude', '--list').out
+    refute File.exist?(settings_path)
+  end
+
+  def test_exec_list_needs_one_image
+    assert_error 'expected exactly one image', sndbx('exec', '--list')
+    assert_error 'expected exactly one image', sndbx('exec', 'claude', 'gifted_mcnulty', '--list')
+  end
+
   private
 
   def sndbx(*args, docker: true, env: {})
     super(*args, env: {
       'PATH' => docker ? @bin : @no_bin,
       'DOCKER_LOG' => @docker_log,
-      'DOCKER_IMAGES' => @docker_images
+      'DOCKER_IMAGES' => @docker_images,
+      'DOCKER_CONTAINERS' => @docker_containers
     }.merge(env))
   end
 
@@ -634,6 +760,17 @@ class SndbxTest < Minitest::Test
     write_settings(images_dir: images_dir, images: [], **settings)
   end
 
+  def write_exec_settings
+    write_settings(images: [{ name: 'claude', user: 'ubuntu' }, { name: 'codex', user: 'ubuntu' }])
+    add_docker_container('claude', 'gifted_mcnulty')
+    add_docker_container('codex', 'eager_turing')
+    add_docker_container('claude', 'quirky_hopper')
+  end
+
+  def add_docker_container(image, name)
+    File.write(@docker_containers, "#{image} #{name}\n", mode: 'a')
+  end
+
   def add_docker_image(tag)
     File.write(@docker_images, "#{tag}\n", mode: 'a')
   end
@@ -642,12 +779,16 @@ class SndbxTest < Minitest::Test
     File.readlines(@docker_log).map { |line| JSON.parse(line) }
   end
 
+  def docker_execs
+    docker_calls.select { |call| call.first == 'exec' }
+  end
+
   def docker_builds
     docker_calls.select { |call| call.first == 'build' }
   end
 
   def run_options(workdir)
-    ['run', '--rm', '-it', "--workdir=/workspace/#{workdir}"]
+    ['run', '--rm', '-it', '--label=sndbx.image=claude', "--workdir=/workspace/#{workdir}"]
   end
 
   def volume(name, path = @work)

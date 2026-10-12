@@ -5,7 +5,7 @@ require 'optparse'
 require 'yaml'
 
 module Sndbx
-  VERSION = '0.14.3'.freeze
+  VERSION = '0.15.1'.freeze
 
   class Error < StandardError; end
 
@@ -26,6 +26,7 @@ module Sndbx
 
   module Docker
     DOCKER = 'docker'.freeze
+    IMAGE_LABEL = 'sndbx.image'.freeze
 
     private
 
@@ -38,6 +39,14 @@ module Sndbx
 
     def image_exists?(tag)
       quiet_system(DOCKER, 'image', 'inspect', tag)
+    end
+
+    def running_containers(image)
+      names = IO.popen([DOCKER, 'ps', '--filter', "label=#{IMAGE_LABEL}=#{image}", '--format', '{{.Names}}'],
+                       err: File::NULL, &:readlines)
+      raise Error, 'failed to list running containers' unless $?.success?
+
+      names.map(&:chomp)
     end
 
     def quiet_system(*command)
@@ -135,10 +144,92 @@ module Sndbx
     end
   end
 
+  class ExecCommand
+    include Command
+    include Docker
+
+    private
+
+    def parse
+      user = nil
+      list = false
+      positionals = []
+
+      parser = OptionParser.new do |opts|
+        opts.banner = 'Usage: sndbx exec IMAGE CONTAINER COMMAND [ARGS] | IMAGE --list'
+        opts.separator ''
+        opts.separator 'Runs COMMAND in a running sandbox of IMAGE, like docker exec -i, with -t when stdin is a terminal.'
+        opts.separator 'Options go before COMMAND, everything from COMMAND on goes to it.'
+        opts.separator ''
+
+        opts.on('-u', '--user=USER', "Run COMMAND as USER, the container's user by default") do |name|
+          raise Error, 'expected a user' if name.empty?
+
+          user = name
+        end
+
+        opts.on('-l', '--list', "Print IMAGE's running containers") do
+          list = true
+        end
+
+        help_option(opts)
+      end
+
+      # Stop at COMMAND, the third positional, so its own options reach it
+      catch(:command) do
+        parser.order!(ARGV) do |arg|
+          if positionals.length == 2
+            ARGV.unshift(arg)
+            throw(:command)
+          end
+
+          positionals.push(arg)
+        end
+      end
+
+      # -- ends the options, the words after it start with the missing positionals
+      positionals.push(ARGV.shift) while positionals.length < 2 && ARGV.any?
+
+      if list
+        raise Error, 'expected exactly one image' unless positionals.length == 1 && ARGV.empty?
+
+        return { image: positionals.first, list: true }
+      end
+
+      raise Error, 'expected an image, a container and a command' unless positionals.length == 2 && ARGV.any?
+
+      { image: positionals[0], container: positionals[1], command: ARGV.dup, user: user }
+    end
+
+    def run(image:, list: false, **options)
+      if list
+        check_docker
+        running_containers(image).each { |name| puts name }
+      else
+        Settings.new.image(image)
+        exec_in(image, **options)
+      end
+    end
+
+    def exec_in(image, container:, command:, user:)
+      check_docker
+      containers = running_containers(image)
+      raise Error, "no running #{image} sandbox" if containers.empty?
+      unless containers.include?(container)
+        raise Error, "container '#{container}' is not a running #{image} sandbox, expected one of: #{containers.join(', ')}"
+      end
+
+      # Without a terminal on stdin docker refuses -t, which breaks pipes and scripts
+      tty_args = $stdin.tty? ? ['-it'] : ['-i']
+      user_args = user ? ["--user=#{user}"] : []
+      exec(DOCKER, 'exec', *tty_args, *user_args, container, *command)
+    end
+  end
+
   class CLI
     include Command
 
-    COMMANDS = { 'run' => RunCommand, 'build' => BuildCommand }.freeze
+    COMMANDS = { 'run' => RunCommand, 'build' => BuildCommand, 'exec' => ExecCommand }.freeze
 
     private
 
@@ -149,8 +240,9 @@ module Sndbx
         opts.banner = 'Usage: sndbx command [options]'
         opts.separator ''
         opts.separator 'Commands:'
-        opts.separator '    run IMAGE      Run a sandboxed image'
-        opts.separator '    build IMAGE    Build an image'
+        opts.separator '    run IMAGE                       Run a sandboxed image'
+        opts.separator '    build IMAGE                     Build an image'
+        opts.separator '    exec IMAGE CONTAINER COMMAND    Run a command in a running sandbox'
         opts.separator ''
         opts.separator "Run 'sndbx command --help' for a command's options."
         opts.separator ''
@@ -395,7 +487,8 @@ module Sndbx
       check_workdir
       FileUtils.mkdir_p(@image[:config_dir])
 
-      exec(DOCKER, *RUN_OPTIONS, "--workdir=#{@workdir}", *volume_args, *port_args, *@docker_args, @image[:tag])
+      exec(DOCKER, *RUN_OPTIONS, "--label=#{IMAGE_LABEL}=#{@image[:name]}", "--workdir=#{@workdir}",
+           *volume_args, *port_args, *@docker_args, @image[:tag])
     end
 
     private
