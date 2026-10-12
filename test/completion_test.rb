@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require_relative 'test_helper'
 
 class CompletionTest < Minitest::Test
@@ -5,7 +7,7 @@ class CompletionTest < Minitest::Test
 
   COMPLETION = File.expand_path('../completions/_sndbx', __dir__)
 
-  COMPLETE = <<~BASH.freeze
+  COMPLETE = <<~BASH
     source "$COMPLETION"
     COMP_WORDS=(sndbx "$@")
     COMP_CWORD=$#
@@ -14,8 +16,9 @@ class CompletionTest < Minitest::Test
     exit 0
   BASH
 
-  # Speaks docker's cobra completion protocol with the output in DOCKER_COMPLETIONS, fails like docker before 26 without it.
-  FAKE_DOCKER = <<~RUBY.freeze
+  # Speaks docker's cobra completion protocol with the output in DOCKER_COMPLETIONS,
+  # fails like docker before 26 without it.
+  FAKE_DOCKER = <<~RUBY
     #!#{RbConfig.ruby}
     require 'json'
 
@@ -173,7 +176,8 @@ class CompletionTest < Minitest::Test
 
     assert_equal %w[gifted_mcnulty quirky_hopper], complete('exec', 'claude', '')
     assert_equal %w[quirky_hopper], complete('exec', '-u', 'root', 'claude', 'q')
-    assert_equal [['info'], ['ps', '--filter', 'label=sndbx.image=claude', '--format', '{{.Names}}']], docker_calls.last(2)
+    assert_equal [['info'], ['ps', '--filter', 'label=sndbx.image=claude', '--format', '{{.Names}}']],
+                 docker_calls.last(2)
   end
 
   def test_exec_options_before_the_command
@@ -228,7 +232,8 @@ class CompletionTest < Minitest::Test
 
     assert_equal %w[/opt/sdk project],
                  complete('run', '-v', '../sdk', ':', '/opt/sdk', ':', 'ro', '-v', 'notes.txt:/notes.txt', '-w', '')
-    assert_equal %w[/opt/sdk backend], complete('run', '-v', '"../sdk:/opt/sdk"', '-v', "#{api}:/workspace/backend", '-w', '')
+    assert_equal %w[/opt/sdk backend],
+                 complete('run', '-v', '"../sdk:/opt/sdk"', '-v', "#{api}:/workspace/backend", '-w', '')
   end
 
   def test_workdir_completes_the_workspace_root

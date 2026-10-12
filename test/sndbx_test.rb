@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require_relative 'test_helper'
 require 'pty'
 
@@ -6,7 +8,7 @@ class SndbxTest < Minitest::Test
 
   REPO_IMAGES_DIR = File.expand_path('../images', __dir__)
 
-  FAKE_DOCKER = <<~RUBY.freeze
+  FAKE_DOCKER = <<~RUBY
     #!#{RbConfig.ruby}
     require 'json'
 
@@ -80,7 +82,7 @@ class SndbxTest < Minitest::Test
 
     refute_predicate result, :success?
     assert_equal "Created an example config at #{settings_path}, edit it and run again.\n", result.err
-    assert_equal ['claude'], YAML.safe_load_file(settings_path)['images'].map { |image| image['name'] }
+    assert_equal(['claude'], YAML.safe_load_file(settings_path)['images'].map { |image| image['name'] })
   end
 
   def test_unknown_image
@@ -98,7 +100,8 @@ class SndbxTest < Minitest::Test
   def test_unquoted_port
     write_settings(images: [{ name: 'claude', user: 'ubuntu', ports: [3000] }])
 
-    assert_error "image 'claude' has an unquoted port in #{settings_path}, YAML read it as 3000; quote it, e.g. \"3000\"",
+    assert_error "image 'claude' has an unquoted port in #{settings_path}, YAML read it as 3000; " \
+                 'quote it, e.g. "3000"',
                  sndbx('run', 'claude')
   end
 
@@ -111,7 +114,8 @@ class SndbxTest < Minitest::Test
   def test_invalid_tag_prefix
     write_settings(tag_prefix: 'Not Valid', images: [])
 
-    assert_error "invalid #{settings_path}: tag_prefix must be a lowercase image name, e.g. sndbx", sndbx('run', 'claude')
+    assert_error "invalid #{settings_path}: tag_prefix must be a lowercase image name, e.g. sndbx",
+                 sndbx('run', 'claude')
   end
 
   def test_images_must_be_a_list
@@ -192,7 +196,8 @@ class SndbxTest < Minitest::Test
   def test_workdir_must_be_a_volume
     write_claude_settings
 
-    assert_error "workdir 'api' is not a directory volume, expected one of: project", sndbx('run', 'claude', '-w', 'api')
+    assert_error "workdir 'api' is not a directory volume, expected one of: project",
+                 sndbx('run', 'claude', '-w', 'api')
   end
 
   def test_run_with_volume_target_and_options_keeps_the_current_directory
@@ -201,7 +206,8 @@ class SndbxTest < Minitest::Test
 
     sndbx('run', 'claude', '-v', '../garmin/sdk:/opt/garmin/sdk:ro')
 
-    assert_equal [*run_options('project'), *volume('project'), '-v', "#{sdk}:/opt/garmin/sdk:ro", *config_volume, 'sndbx:claude'],
+    assert_equal [*run_options('project'), *volume('project'), '-v', "#{sdk}:/opt/garmin/sdk:ro", *config_volume,
+                  'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -221,8 +227,8 @@ class SndbxTest < Minitest::Test
 
     sndbx('run', 'claude', '-v', '~/.gitconfig:/home/ubuntu/.gitconfig:ro')
 
-    assert_equal [*run_options('project'), *volume('project'), '-v', "#{gitconfig}:/home/ubuntu/.gitconfig:ro", *config_volume,
-                  'sndbx:claude'],
+    assert_equal [*run_options('project'), *volume('project'), '-v', "#{gitconfig}:/home/ubuntu/.gitconfig:ro",
+                  *config_volume, 'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -249,8 +255,8 @@ class SndbxTest < Minitest::Test
 
     sndbx('run', 'claude', '-v', "#{api}:/workspace", '-v', '.:/opt/project')
 
-    assert_equal ['run', '--rm', '-it', '--label=sndbx.image=claude', '--workdir=/workspace', '-v', "#{api}:/workspace", '-v', "#{@work}:/opt/project",
-                  *config_volume, 'sndbx:claude'],
+    assert_equal ['run', '--rm', '-it', '--label=sndbx.image=claude', '--workdir=/workspace',
+                  '-v', "#{api}:/workspace", '-v', "#{@work}:/opt/project", *config_volume, 'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -295,7 +301,8 @@ class SndbxTest < Minitest::Test
   def test_volume_target_must_be_absolute
     write_claude_settings
 
-    assert_error "invalid volume '.:workspace', DST must be an absolute path", sndbx('run', 'claude', '-v', '.:workspace')
+    assert_error "invalid volume '.:workspace', DST must be an absolute path",
+                 sndbx('run', 'claude', '-v', '.:workspace')
   end
 
   def test_invalid_volume
@@ -310,7 +317,8 @@ class SndbxTest < Minitest::Test
     first = mkdir('a/project')
     second = mkdir('b/project')
 
-    assert_error 'more than one volume is mounted at /workspace/project', sndbx('run', 'claude', '-v', first, '-v', second)
+    assert_error 'more than one volume is mounted at /workspace/project',
+                 sndbx('run', 'claude', '-v', first, '-v', second)
   end
 
   def test_refuses_to_mount_home
@@ -353,7 +361,7 @@ class SndbxTest < Minitest::Test
     sndbx('run', 'claude', '-p', '3000', '-p', '8080:80', '-p', '53/udp')
 
     assert_equal [*run_options('project'), *volume('project'), *config_volume,
-                  *%w[-p 127.0.0.1:3080:3080 -p 3000:3000 -p 8080:80 -p 53:53/udp], 'sndbx:claude'],
+                  '-p', '127.0.0.1:3080:3080', '-p', '3000:3000', '-p', '8080:80', '-p', '53:53/udp', 'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -398,7 +406,8 @@ class SndbxTest < Minitest::Test
 
     config_dir = File.join(@home, '.config', 'sndbx', 'claude-docker')
     assert File.directory?(config_dir)
-    assert_equal [*run_options('project'), *volume('project'), '-v', "#{config_dir}:/home/ubuntu/.claude", 'sndbx:claude'],
+    assert_equal [*run_options('project'), *volume('project'), '-v', "#{config_dir}:/home/ubuntu/.claude",
+                  'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -410,7 +419,8 @@ class SndbxTest < Minitest::Test
 
     config_dir = File.join(@home, '.claude_docker')
     assert File.directory?(config_dir)
-    assert_equal [*run_options('project'), *volume('project'), '-v', "#{config_dir}:/home/ubuntu/.claude", 'sndbx:claude'],
+    assert_equal [*run_options('project'), *volume('project'), '-v', "#{config_dir}:/home/ubuntu/.claude",
+                  'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -431,8 +441,8 @@ class SndbxTest < Minitest::Test
 
     sndbx('run', 'claude', '--', '-v', '/tmp:/tmp', '-p', '3000', '-w', '/tmp')
 
-    assert_equal [*run_options('project'), *volume('project'), *config_volume, '-v', '/tmp:/tmp', '-p', '3000', '-w', '/tmp',
-                  'sndbx:claude'],
+    assert_equal [*run_options('project'), *volume('project'), *config_volume,
+                  '-v', '/tmp:/tmp', '-p', '3000', '-w', '/tmp', 'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -599,7 +609,8 @@ class SndbxTest < Minitest::Test
     missing = File.join(@root, 'missing')
     write_settings(images_dir: missing, images: [])
 
-    assert_error "images directory #{missing} does not exist, set images_dir in #{settings_path}", sndbx('build', 'base')
+    assert_error "images directory #{missing} does not exist, set images_dir in #{settings_path}",
+                 sndbx('build', 'base')
   end
 
   def test_build_needs_one_image_or_all
@@ -646,7 +657,8 @@ class SndbxTest < Minitest::Test
               RbConfig.ruby, BIN, 'exec', 'claude', 'gifted_mcnulty', 'bash', chdir: @work) do |out, _in, pid|
       begin
         out.read
-      rescue Errno::EIO # the pty closes when sndbx exits
+      rescue Errno::EIO
+        # the pty closes when sndbx exits
       end
       Process.wait(pid)
     end
@@ -688,7 +700,8 @@ class SndbxTest < Minitest::Test
   def test_exec_container_of_another_image
     write_exec_settings
 
-    assert_error "container 'eager_turing' is not a running claude sandbox, expected one of: gifted_mcnulty, quirky_hopper",
+    assert_error "container 'eager_turing' is not a running claude sandbox, " \
+                 'expected one of: gifted_mcnulty, quirky_hopper',
                  sndbx('exec', 'claude', 'eager_turing', 'bash')
     assert_empty docker_execs
   end

@@ -1,11 +1,13 @@
 #!/usr/bin/env -S ruby --disable-gems
+# frozen_string_literal: true
 
+require 'English'
 require 'fileutils'
 require 'optparse'
 require 'yaml'
 
 module Sndbx
-  VERSION = '0.15.1'.freeze
+  VERSION = '0.15.1'
 
   class Error < StandardError; end
 
@@ -25,8 +27,8 @@ module Sndbx
   end
 
   module Docker
-    DOCKER = 'docker'.freeze
-    IMAGE_LABEL = 'sndbx.image'.freeze
+    DOCKER = 'docker'
+    IMAGE_LABEL = 'sndbx.image'
 
     private
 
@@ -44,7 +46,7 @@ module Sndbx
     def running_containers(image)
       names = IO.popen([DOCKER, 'ps', '--filter', "label=#{IMAGE_LABEL}=#{image}", '--format', '{{.Names}}'],
                        err: File::NULL, &:readlines)
-      raise Error, 'failed to list running containers' unless $?.success?
+      raise Error, 'failed to list running containers' unless $CHILD_STATUS.success?
 
       names.map(&:chomp)
     end
@@ -158,7 +160,8 @@ module Sndbx
       parser = OptionParser.new do |opts|
         opts.banner = 'Usage: sndbx exec IMAGE CONTAINER COMMAND [ARGS] | IMAGE --list'
         opts.separator ''
-        opts.separator 'Runs COMMAND in a running sandbox of IMAGE, like docker exec -i, with -t when stdin is a terminal.'
+        opts.separator 'Runs COMMAND in a running sandbox of IMAGE, like docker exec -i,'
+        opts.separator 'with -t when stdin is a terminal.'
         opts.separator 'Options go before COMMAND, everything from COMMAND on goes to it.'
         opts.separator ''
 
@@ -216,7 +219,8 @@ module Sndbx
       containers = running_containers(image)
       raise Error, "no running #{image} sandbox" if containers.empty?
       unless containers.include?(container)
-        raise Error, "container '#{container}' is not a running #{image} sandbox, expected one of: #{containers.join(', ')}"
+        raise Error,
+              "container '#{container}' is not a running #{image} sandbox, expected one of: #{containers.join(', ')}"
       end
 
       # Without a terminal on stdin docker refuses -t, which breaks pipes and scripts
@@ -259,7 +263,9 @@ module Sndbx
       name = ARGV.shift
 
       abort(parser.help) unless name
-      command = COMMANDS.fetch(name) { raise Error, "unknown command '#{name}', expected one of: #{COMMANDS.keys.join(', ')}" }
+      command = COMMANDS.fetch(name) do
+        raise Error, "unknown command '#{name}', expected one of: #{COMMANDS.keys.join(', ')}"
+      end
 
       { command: command }
     end
@@ -272,11 +278,11 @@ module Sndbx
   class Settings
     DIR = File.join(Dir.home, '.config', 'sndbx').freeze
     PATH = File.join(DIR, 'settings.yml').freeze
-    HOME_ROOT = '/home'.freeze
-    DEFAULT_TAG_PREFIX = 'sndbx'.freeze
+    HOME_ROOT = '/home'
+    DEFAULT_TAG_PREFIX = 'sndbx'
     TAG_PREFIX_FORMAT = %r{\A[a-z0-9]+(?:[._/-][a-z0-9]+)*\z}.freeze
 
-    EXAMPLE = <<~YAML.freeze
+    EXAMPLE = <<~YAML
       # tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
       images:
         - name: claude
@@ -299,14 +305,16 @@ module Sndbx
       ports.each do |port|
         next if port.is_a?(String)
 
-        raise Error, "image '#{name}' has an unquoted port in #{PATH}, YAML read it as #{port.inspect}; quote it, e.g. \"3000\""
+        raise Error, "image '#{name}' has an unquoted port in #{PATH}, YAML read it as #{port.inspect}; " \
+                     'quote it, e.g. "3000"'
       end
 
       docker_args = Array(image['docker_args'])
       raise Error, "image '#{name}' has docker_args that aren't strings in #{PATH}" unless docker_args.all?(String)
 
       config_dir = image['config_dir']
-      raise Error, "image '#{name}' has a config_dir that isn't a path in #{PATH}" unless config_dir.nil? || (config_dir.is_a?(String) && !config_dir.empty?)
+      valid_config_dir = config_dir.nil? || (config_dir.is_a?(String) && !config_dir.empty?)
+      raise Error, "image '#{name}' has a config_dir that isn't a path in #{PATH}" unless valid_config_dir
 
       {
         name: name,
@@ -327,7 +335,8 @@ module Sndbx
       optional_setting('tag_prefix') || DEFAULT_TAG_PREFIX
     end
 
-    # __dir__ resolves symlinks, so the default finds the repo when bin/sndbx is linked into PATH, but not when it's copied.
+    # __dir__ resolves symlinks, so the default finds the repo when bin/sndbx is linked into PATH,
+    # but not when it's copied.
     def images_dir
       dir = optional_setting('images_dir')
       return File.expand_path(dir, DIR) if dir
@@ -391,9 +400,9 @@ module Sndbx
   class Builder
     include Docker
 
-    BASE_NAME = 'base'.freeze
+    BASE_NAME = 'base'
     BASE_FROM_FORMAT = /^FROM\s+\$\{TAG_PREFIX\}:#{BASE_NAME}(?:\s|$)/.freeze
-    IMAGES_DIR_SETTING = 'images_dir'.freeze
+    IMAGES_DIR_SETTING = 'images_dir'
 
     def initialize(settings)
       @tag_prefix = settings.tag_prefix
@@ -407,7 +416,8 @@ module Sndbx
 
     def call(image:)
       names = image_names
-      raise Error, "unknown image '#{image}', expected one of: #{names.join(', ')}" unless image.nil? || names.include?(image)
+      known_image = image.nil? || names.include?(image)
+      raise Error, "unknown image '#{image}', expected one of: #{names.join(', ')}" unless known_image
 
       check_docker
 
@@ -436,7 +446,8 @@ module Sndbx
       args = needs_base?(name) ? ['--build-arg', "TAG_PREFIX=#{@tag_prefix}"] : []
 
       puts "==> Building #{tag} from #{image_dir(name)}"
-      raise Error, "failed to build #{tag}" unless system(DOCKER, 'build', '--no-cache', *args, '-t', tag, image_dir(name))
+      built = system(DOCKER, 'build', '--no-cache', *args, '-t', tag, image_dir(name))
+      raise Error, "failed to build #{tag}" unless built
     end
 
     def needs_base?(name)
@@ -466,7 +477,7 @@ module Sndbx
     include Docker
 
     RUN_OPTIONS = ['run', '--rm', '-it'].freeze
-    MOUNT_ROOT = '/workspace'.freeze
+    MOUNT_ROOT = '/workspace'
     PORT_FORMAT = %r{\A(?:[\d.]+:)?\d+(?::\d+)?(?:/(?:tcp|udp))?\z}.freeze
     BARE_PORT_FORMAT = %r{\A(\d+)(/(?:tcp|udp))?\z}.freeze
     MAX_PORT = 65_535
@@ -504,7 +515,8 @@ module Sndbx
       volumes
     end
 
-    # Docker's -v syntax, SRC[:DST[:OPTS]], except that SRC is always a host path and DST defaults to MOUNT_ROOT/<basename>.
+    # Docker's -v syntax, SRC[:DST[:OPTS]], except that SRC is always a host path
+    # and DST defaults to MOUNT_ROOT/<basename>.
     def parse_volume(spec)
       match = spec.match(VOLUME_FORMAT)
       raise Error, "invalid volume '#{spec}', expected SRC[:DST[:OPTS]]" unless match
@@ -555,7 +567,9 @@ module Sndbx
 
     def normalize_port(port)
       raise Error, "invalid port '#{port}', expected PORT or HOST:CONTAINER" unless port.match?(PORT_FORMAT)
-      raise Error, "invalid port '#{port}', ports go up to #{MAX_PORT}" if port_numbers(port).any? { |number| number > MAX_PORT }
+
+      too_high = port_numbers(port).any? { |number| number > MAX_PORT }
+      raise Error, "invalid port '#{port}', ports go up to #{MAX_PORT}" if too_high
 
       port.sub(BARE_PORT_FORMAT, '\\1:\\1\\2')
     end
