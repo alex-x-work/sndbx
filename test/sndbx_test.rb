@@ -146,7 +146,7 @@ class SndbxTest < Minitest::Test
 
     sndbx('run', 'claude')
 
-    assert_equal [['--version'], ['info'], ['image', 'inspect', 'sndbx:claude']], docker_calls.first(3)
+    assert_equal [['info'], ['image', 'inspect', 'sndbx:claude']], docker_calls.first(2)
   end
 
   def test_run_with_volumes_starts_in_the_last_one

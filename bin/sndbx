@@ -1,11 +1,11 @@
-#!/usr/bin/env ruby
+#!/usr/bin/env -S ruby --disable-gems
 
 require 'fileutils'
 require 'optparse'
 require 'yaml'
 
 module Sndbx
-  VERSION = '0.14.1'.freeze
+  VERSION = '0.14.3'.freeze
 
   class Error < StandardError; end
 
@@ -30,8 +30,10 @@ module Sndbx
     private
 
     def check_docker
-      raise Error, 'docker is not installed' unless quiet_system(DOCKER, '--version')
-      raise Error, 'docker is not running' unless quiet_system(DOCKER, 'info')
+      case quiet_system(DOCKER, 'info')
+      when nil then raise Error, 'docker is not installed'
+      when false then raise Error, 'docker is not running'
+      end
     end
 
     def image_exists?(tag)
