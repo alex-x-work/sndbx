@@ -73,7 +73,7 @@ images:
   - name: claude
     tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
     user: ubuntu
-    # config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
+    # config_dir: ~/.claude_docker # optional, relative paths resolve against ~/.config/sndbx, defaults to ~/.config/sndbx/<name>
     config_target: .claude # optional, relative to the user's home, defaults to .<name>
     docker_args: ["--memory=8g"] # optional, extra docker run arguments
   - name: opencode

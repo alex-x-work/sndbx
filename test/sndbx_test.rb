@@ -380,6 +380,42 @@ class SndbxTest < Minitest::Test
                  docker_calls.last
   end
 
+  def test_relative_config_dir_resolves_against_the_settings_dir
+    write_settings(images: [{ name: 'claude', user: 'ubuntu', config_dir: 'claude-docker' }])
+    add_docker_image('sndbx:claude')
+
+    sndbx('run', 'claude')
+
+    config_dir = File.join(@home, '.config', 'sndbx', 'claude-docker')
+    assert File.directory?(config_dir)
+    assert_equal [*run_options('project'), *volume('project'), '-v', "#{config_dir}:/home/ubuntu/.claude", 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_home_config_dir_resolves_against_home
+    write_settings(images: [{ name: 'claude', user: 'ubuntu', config_dir: '~/.claude_docker' }])
+    add_docker_image('sndbx:claude')
+
+    sndbx('run', 'claude')
+
+    config_dir = File.join(@home, '.claude_docker')
+    assert File.directory?(config_dir)
+    assert_equal [*run_options('project'), *volume('project'), '-v', "#{config_dir}:/home/ubuntu/.claude", 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_config_dir_must_be_a_path
+    write_settings(images: [{ name: 'claude', user: 'ubuntu', config_dir: 42 }])
+
+    assert_error "image 'claude' has a config_dir that isn't a path in #{settings_path}", sndbx('run', 'claude')
+  end
+
+  def test_config_dir_must_not_be_empty
+    write_settings(images: [{ name: 'claude', user: 'ubuntu', config_dir: '' }])
+
+    assert_error "image 'claude' has a config_dir that isn't a path in #{settings_path}", sndbx('run', 'claude')
+  end
+
   def test_run_passes_its_own_options_after_the_separator_to_docker
     write_claude_settings
 

@@ -5,7 +5,7 @@ require 'optparse'
 require 'yaml'
 
 module Sndbx
-  VERSION = '0.14.0'.freeze
+  VERSION = '0.14.1'.freeze
 
   class Error < StandardError; end
 
@@ -188,7 +188,7 @@ module Sndbx
         - name: claude
           user: ubuntu
           # tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
-          # config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
+          # config_dir: ~/.claude_docker # optional, relative paths resolve against ~/.config/sndbx, defaults to ~/.config/sndbx/<name>
           # config_target: .claude # optional, relative to the user's home, defaults to .<name>
           # ports: ['3000'] # optional, always published; quote them, YAML reads 8080:22 as a number
           # docker_args: ['--memory=8g'] # optional, extra docker run arguments
@@ -211,11 +211,14 @@ module Sndbx
       docker_args = Array(image['docker_args'])
       raise Error, "image '#{name}' has docker_args that aren't strings in #{PATH}" unless docker_args.all?(String)
 
+      config_dir = image['config_dir']
+      raise Error, "image '#{name}' has a config_dir that isn't a path in #{PATH}" unless config_dir.nil? || (config_dir.is_a?(String) && !config_dir.empty?)
+
       {
         name: name,
         tag: image['tag'] || "#{tag_prefix}:#{name}",
         user: image['user'],
-        config_dir: File.expand_path(image['config_dir'] || File.join(DIR, name)),
+        config_dir: File.expand_path(config_dir || name, DIR),
         config_target: File.join(HOME_ROOT, image['user'], image['config_target'] || ".#{name}"),
         ports: ports,
         docker_args: docker_args
