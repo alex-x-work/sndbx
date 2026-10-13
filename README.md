@@ -49,7 +49,7 @@ FROM ${TAG_PREFIX}:base
 - publishes the image's `ports` plus each `-p PORT`
 - passes the image's `docker_args` plus everything after `--` to `docker run`
 - labels the container `sndbx.image=<name>`, which `sndbx exec` and `sndbx resume` find it by
-- logs each `docker run`, `exec`, `start` and `build` it runs to `~/.local/state/sndbx/sndbx.log`
+- logs each `docker run`, `exec`, `start` and `build` it runs to `~/.local/state/sndbx/sndbx.log`, which `sndbx logs` follows
 
 ### Install
 
@@ -105,6 +105,8 @@ sndbx exec -u root claude gifted_mcnulty bash         # as root
 sndbx exec claude --list                              # print the running claude sandboxes
 sndbx resume claude sleepy_babbage                    # restart a stopped claude sandbox, like docker start -ai
 sndbx resume claude --list                            # print the stopped claude sandboxes
+sndbx logs                                            # follow the log of docker commands, like tail -f
+sndbx logs -n 50                                      # start with the last 50 lines
 sndbx --version
 ```
 

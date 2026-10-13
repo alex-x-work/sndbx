@@ -138,7 +138,7 @@ _sndbx() {
     if [[ "${cur}" == -* ]]; then
       mapfile -t COMPREPLY < <(compgen -W '-V --version -h --help' -- "${cur}")
     else
-      mapfile -t COMPREPLY < <(compgen -W 'run build exec resume' -- "${cur}")
+      mapfile -t COMPREPLY < <(compgen -W 'run build exec resume logs' -- "${cur}")
     fi
     return 0
   fi
@@ -237,6 +237,13 @@ _sndbx() {
           fi
           ;;
       esac
+      ;;
+    logs)
+      if [[ "${cur}" == -* ]] && [[ "${prev}" != -n && "${prev}" != --lines ]]; then
+        mapfile -t COMPREPLY < <(compgen -W '-n --lines -h --help' -- "${cur}")
+      else
+        COMPREPLY=()
+      fi
       ;;
     build)
       if [[ "${cur}" == -* ]]; then

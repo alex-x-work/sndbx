@@ -70,6 +70,10 @@ class SndbxTest < Minitest::Test
     assert_help 'Usage: sndbx resume IMAGE CONTAINER | IMAGE --list', sndbx('resume', '-h')
   end
 
+  def test_logs_help
+    assert_help 'Usage: sndbx logs [options]', sndbx('logs', '-h')
+  end
+
   def test_version
     result = sndbx('-V')
 
@@ -78,7 +82,7 @@ class SndbxTest < Minitest::Test
   end
 
   def test_unknown_command
-    assert_error "unknown command 'foo', expected one of: run, build, exec, resume", sndbx('foo')
+    assert_error "unknown command 'foo', expected one of: run, build, exec, resume, logs", sndbx('foo')
   end
 
   def test_invalid_option
@@ -860,7 +864,53 @@ class SndbxTest < Minitest::Test
     assert_equal run_options('project'), docker_calls.last.first(5)
   end
 
+  def test_logs_follows_the_log
+    write_fake_tail
+    FileUtils.mkdir_p(File.dirname(log_path))
+    File.write(log_path, '')
+
+    result = sndbx('logs')
+
+    assert_predicate result, :success?
+    assert_equal ['-n', '10', '-f', log_path], JSON.parse(result.out)
+  end
+
+  def test_logs_with_lines
+    write_fake_tail
+    FileUtils.mkdir_p(File.dirname(log_path))
+    File.write(log_path, '')
+
+    assert_equal ['-n', '50', '-f', log_path], JSON.parse(sndbx('logs', '-n', '50').out)
+    assert_equal ['-n', '0', '-f', log_path], JSON.parse(sndbx('logs', '--lines=0').out)
+  end
+
+  def test_logs_without_a_log
+    write_fake_tail
+
+    assert_error "no log yet at #{log_path}", sndbx('logs')
+  end
+
+  def test_logs_without_tail
+    FileUtils.mkdir_p(File.dirname(log_path))
+    File.write(log_path, '')
+
+    assert_error 'tail is not installed', sndbx('logs')
+  end
+
+  def test_logs_needs_a_line_count
+    assert_error 'invalid argument: -n x', sndbx('logs', '-n', 'x')
+    assert_error 'expected a line count of 0 or more', sndbx('logs', '-n', '-1')
+  end
+
+  def test_logs_takes_no_arguments
+    assert_error 'expected no arguments', sndbx('logs', 'claude')
+  end
+
   private
+
+  def write_fake_tail
+    write_executable(File.join(@bin, 'tail'), "#!#{RbConfig.ruby}\nrequire 'json'\nputs ARGV.to_json\n")
+  end
 
   def log_path
     File.join(@home, '.local', 'state', 'sndbx', 'sndbx.log')

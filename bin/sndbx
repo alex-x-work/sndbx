@@ -8,7 +8,7 @@ require 'shellwords'
 require 'yaml'
 
 module Sndbx
-  VERSION = '0.18.0'
+  VERSION = '0.19.0'
 
   class Error < StandardError; end
 
@@ -313,6 +313,45 @@ module Sndbx
     end
   end
 
+  class LogsCommand
+    include Command
+
+    TAIL = 'tail'
+
+    private
+
+    def parse
+      lines = 10
+
+      OptionParser.new do |opts|
+        opts.banner = 'Usage: sndbx logs [options]'
+        opts.separator ''
+        opts.separator "Follows #{Docker::LOG_PATH}, the docker commands sndbx ran, like tail -f."
+        opts.separator ''
+
+        opts.on('-n', '--lines=N', Integer, "Start with the last N lines, #{lines} by default") do |count|
+          raise Error, 'expected a line count of 0 or more' if count.negative?
+
+          lines = count
+        end
+
+        help_option(opts)
+      end.parse!
+
+      raise Error, 'expected no arguments' unless ARGV.empty?
+
+      { lines: lines }
+    end
+
+    def run(lines:)
+      raise Error, "no log yet at #{Docker::LOG_PATH}" unless File.exist?(Docker::LOG_PATH)
+
+      exec(TAIL, '-n', lines.to_s, '-f', Docker::LOG_PATH)
+    rescue Errno::ENOENT
+      raise Error, "#{TAIL} is not installed"
+    end
+  end
+
   class CLI
     include Command
 
@@ -320,7 +359,8 @@ module Sndbx
       'run' => RunCommand,
       'build' => BuildCommand,
       'exec' => ExecCommand,
-      'resume' => ResumeCommand
+      'resume' => ResumeCommand,
+      'logs' => LogsCommand
     }.freeze
 
     private
@@ -336,6 +376,7 @@ module Sndbx
         opts.separator '    build IMAGE                     Build an image'
         opts.separator '    exec IMAGE CONTAINER COMMAND    Run a command in a running sandbox'
         opts.separator '    resume IMAGE CONTAINER          Restart a stopped sandbox'
+        opts.separator '    logs                            Follow the log of docker commands'
         opts.separator ''
         opts.separator "Run 'sndbx command --help' for a command's options."
         opts.separator ''

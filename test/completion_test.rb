@@ -47,13 +47,13 @@ class CompletionTest < Minitest::Test
   end
 
   def test_options_match_help
-    [[], ['run'], ['build'], ['exec'], ['resume']].each do |command|
+    [[], ['run'], ['build'], ['exec'], ['resume'], ['logs']].each do |command|
       assert_equal help_options(*command), complete(*command, '-'), "options of sndbx #{command.join(' ')}"
     end
   end
 
   def test_commands
-    assert_equal %w[build exec resume run], complete('')
+    assert_equal %w[build exec logs resume run], complete('')
     assert_equal %w[resume run], complete('r')
     assert_equal %w[run], complete('ru')
   end
@@ -227,6 +227,14 @@ class CompletionTest < Minitest::Test
     assert_empty complete('resume', 'claude', 'sleepy_babbage', '')
     assert_empty complete('resume', 'claude', '--list', '')
     assert_equal %w[claude codex], complete('resume', '--list', '')
+  end
+
+  def test_logs_completes_nothing_but_options
+    write_images_settings
+
+    assert_empty complete('logs', '')
+    assert_empty complete('logs', '-n', '')
+    assert_empty complete('logs', '-n', '-')
   end
 
   def test_volume_completes_directories
