@@ -47,14 +47,15 @@ class CompletionTest < Minitest::Test
   end
 
   def test_options_match_help
-    [[], ['run'], ['build'], ['exec']].each do |command|
+    [[], ['run'], ['build'], ['exec'], ['resume']].each do |command|
       assert_equal help_options(*command), complete(*command, '-'), "options of sndbx #{command.join(' ')}"
     end
   end
 
   def test_commands
-    assert_equal %w[build exec run], complete('')
-    assert_equal %w[run], complete('r')
+    assert_equal %w[build exec resume run], complete('')
+    assert_equal %w[resume run], complete('r')
+    assert_equal %w[run], complete('ru')
   end
 
   def test_unknown_command
@@ -200,6 +201,32 @@ class CompletionTest < Minitest::Test
     assert_empty complete('exec', 'claude', '--list', '')
     assert_empty complete('exec', '-l', 'claude', '')
     assert_equal %w[claude codex], complete('exec', '--list', '')
+  end
+
+  def test_resume_images
+    write_images_settings
+
+    assert_equal %w[claude codex], complete('resume', '')
+  end
+
+  def test_resume_containers
+    write_images_settings
+    File.write(@docker_containers, "sleepy_babbage\nzen_lovelace\n")
+
+    assert_equal %w[sleepy_babbage zen_lovelace], complete('resume', 'claude', '')
+    assert_equal %w[zen_lovelace], complete('resume', 'claude', 'z')
+    assert_equal [['info'],
+                  ['ps', '--all', '--filter', 'status=exited', '--filter', 'label=sndbx.image=claude',
+                   '--format', '{{.Names}}']],
+                 docker_calls.last(2)
+  end
+
+  def test_resume_completes_nothing_after_the_container
+    write_images_settings
+
+    assert_empty complete('resume', 'claude', 'sleepy_babbage', '')
+    assert_empty complete('resume', 'claude', '--list', '')
+    assert_equal %w[claude codex], complete('resume', '--list', '')
   end
 
   def test_volume_completes_directories

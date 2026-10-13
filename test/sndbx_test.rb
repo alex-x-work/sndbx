@@ -23,8 +23,11 @@ class SndbxTest < Minitest::Test
       exit(!ENV.key?('DOCKER_STOPPED'))
     in ['image', 'inspect', tag]
       exit(images.include?(tag))
-    in ['ps', '--filter', filter, '--format', '{{.Names}}']
-      containers.each { |image, name| puts name if filter == "label=sndbx.image=\#{image}" }
+    in ['ps', *filters, '--format', '{{.Names}}']
+      status = filters.include?('--all') ? filters.find { |arg| arg.start_with?('status=') }[7..] : 'running'
+      containers.each do |image, name, state = 'running'|
+        puts name if filters.include?("label=sndbx.image=\#{image}") && state == status
+      end
     in ['build', *, '-t', tag, _]
       exit(false) if ENV['DOCKER_BROKEN'] == tag
       File.write(images_path, "\#{tag}\\n", mode: 'a')
@@ -62,6 +65,10 @@ class SndbxTest < Minitest::Test
     assert_help 'Usage: sndbx exec IMAGE CONTAINER COMMAND [ARGS] | IMAGE --list', sndbx('exec', '-h')
   end
 
+  def test_resume_help
+    assert_help 'Usage: sndbx resume IMAGE CONTAINER | IMAGE --list', sndbx('resume', '-h')
+  end
+
   def test_version
     result = sndbx('-V')
 
@@ -70,7 +77,7 @@ class SndbxTest < Minitest::Test
   end
 
   def test_unknown_command
-    assert_error "unknown command 'foo', expected one of: run, build, exec", sndbx('foo')
+    assert_error "unknown command 'foo', expected one of: run, build, exec, resume", sndbx('foo')
   end
 
   def test_invalid_option
@@ -748,6 +755,64 @@ class SndbxTest < Minitest::Test
     assert_error 'expected exactly one image', sndbx('exec', 'claude', 'gifted_mcnulty', '--list')
   end
 
+  def test_resume
+    write_resume_settings
+
+    sndbx('resume', 'claude', 'sleepy_babbage')
+
+    assert_equal [['info'],
+                  ['ps', '--all', '--filter', 'status=exited', '--filter', 'label=sndbx.image=claude',
+                   '--format', '{{.Names}}'],
+                  ['start', '-ai', 'sleepy_babbage']],
+                 docker_calls
+  end
+
+  def test_resume_running_container
+    write_resume_settings
+
+    assert_error "container 'gifted_mcnulty' is not a stopped claude sandbox, expected one of: sleepy_babbage",
+                 sndbx('resume', 'claude', 'gifted_mcnulty')
+    assert_empty docker_starts
+  end
+
+  def test_resume_without_stopped_containers
+    write_exec_settings
+
+    assert_error 'no stopped claude sandbox', sndbx('resume', 'claude', 'gifted_mcnulty')
+  end
+
+  def test_resume_unknown_image
+    write_resume_settings
+
+    assert_error "unknown image 'nope', expected one of: claude, codex", sndbx('resume', 'nope', 'sleepy_babbage')
+  end
+
+  def test_resume_needs_an_image_and_a_container
+    write_resume_settings
+
+    assert_error 'expected an image and a container', sndbx('resume')
+    assert_error 'expected an image and a container', sndbx('resume', 'claude')
+    assert_error 'expected an image and a container', sndbx('resume', 'claude', 'sleepy_babbage', 'bash')
+  end
+
+  def test_resume_without_docker
+    write_resume_settings
+
+    assert_error 'docker is not installed', sndbx('resume', 'claude', 'sleepy_babbage', docker: false)
+  end
+
+  def test_resume_list
+    write_resume_settings
+
+    assert_equal "sleepy_babbage\n", sndbx('resume', 'claude', '--list').out
+    assert_empty sndbx('resume', '-l', 'codex').out
+  end
+
+  def test_resume_list_needs_one_image
+    assert_error 'expected exactly one image', sndbx('resume', '--list')
+    assert_error 'expected exactly one image', sndbx('resume', 'claude', 'sleepy_babbage', '--list')
+  end
+
   private
 
   def sndbx(*args, docker: true, env: {})
@@ -790,8 +855,13 @@ class SndbxTest < Minitest::Test
     add_docker_container('claude', 'quirky_hopper')
   end
 
-  def add_docker_container(image, name)
-    File.write(@docker_containers, "#{image} #{name}\n", mode: 'a')
+  def write_resume_settings
+    write_exec_settings
+    add_docker_container('claude', 'sleepy_babbage', 'exited')
+  end
+
+  def add_docker_container(image, name, state = 'running')
+    File.write(@docker_containers, "#{image} #{name} #{state}\n", mode: 'a')
   end
 
   def add_docker_image(tag)
@@ -804,6 +874,10 @@ class SndbxTest < Minitest::Test
 
   def docker_execs
     docker_calls.select { |call| call.first == 'exec' }
+  end
+
+  def docker_starts
+    docker_calls.select { |call| call.first == 'start' }
   end
 
   def docker_builds

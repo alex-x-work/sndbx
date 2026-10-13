@@ -103,6 +103,30 @@ _sndbx_exec() {
   fi
 }
 
+# Completes the image, then its stopped containers
+_sndbx_resume() {
+  local -a positionals=()
+  local list=0 i
+
+  for (( i = 2; i < COMP_CWORD; i++ )); do
+    case "${COMP_WORDS[i]}" in
+      -l|--list) list=1 ;;
+      -*) ;;
+      *) positionals+=("${COMP_WORDS[i]}") ;;
+    esac
+  done
+
+  if (( ${#positionals[@]} >= 2 )) || (( list && ${#positionals[@]} >= 1 )); then
+    COMPREPLY=()
+  elif [[ "${cur}" == -* ]]; then
+    mapfile -t COMPREPLY < <(compgen -W '-l --list -h --help' -- "${cur}")
+  elif (( ${#positionals[@]} == 0 )); then
+    mapfile -t COMPREPLY < <(compgen -W "$(sndbx run --list 2>/dev/null)" -- "${cur}")
+  else
+    mapfile -t COMPREPLY < <(compgen -W "$(sndbx resume "${positionals[0]}" --list 2>/dev/null)" -- "${cur}")
+  fi
+}
+
 _sndbx() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
@@ -114,7 +138,7 @@ _sndbx() {
     if [[ "${cur}" == -* ]]; then
       mapfile -t COMPREPLY < <(compgen -W '-V --version -h --help' -- "${cur}")
     else
-      mapfile -t COMPREPLY < <(compgen -W 'run build exec' -- "${cur}")
+      mapfile -t COMPREPLY < <(compgen -W 'run build exec resume' -- "${cur}")
     fi
     return 0
   fi
@@ -142,6 +166,9 @@ _sndbx() {
 
   if [[ "${command}" == exec ]]; then
     _sndbx_exec
+    return 0
+  elif [[ "${command}" == resume ]]; then
+    _sndbx_resume
     return 0
   fi
 

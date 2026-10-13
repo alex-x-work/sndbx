@@ -7,7 +7,7 @@ require 'optparse'
 require 'yaml'
 
 module Sndbx
-  VERSION = '0.16.0'
+  VERSION = '0.17.0'
 
   class Error < StandardError; end
 
@@ -44,11 +44,26 @@ module Sndbx
     end
 
     def running_containers(image)
-      names = IO.popen([DOCKER, 'ps', '--filter', "label=#{IMAGE_LABEL}=#{image}", '--format', '{{.Names}}'],
+      containers(image)
+    end
+
+    def stopped_containers(image)
+      containers(image, '--all', '--filter', 'status=exited')
+    end
+
+    def containers(image, *ps_args)
+      names = IO.popen([DOCKER, 'ps', *ps_args, '--filter', "label=#{IMAGE_LABEL}=#{image}", '--format', '{{.Names}}'],
                        err: File::NULL, &:readlines)
-      raise Error, 'failed to list running containers' unless $CHILD_STATUS.success?
+      raise Error, 'failed to list containers' unless $CHILD_STATUS.success?
 
       names.map(&:chomp)
+    end
+
+    def check_container(container, containers, description)
+      raise Error, "no #{description}" if containers.empty?
+      return if containers.include?(container)
+
+      raise Error, "container '#{container}' is not a #{description}, expected one of: #{containers.join(', ')}"
     end
 
     def quiet_system(*command)
@@ -222,12 +237,7 @@ module Sndbx
 
     def exec_in(image, container:, command:, user:)
       check_docker
-      containers = running_containers(image)
-      raise Error, "no running #{image} sandbox" if containers.empty?
-      unless containers.include?(container)
-        raise Error,
-              "container '#{container}' is not a running #{image} sandbox, expected one of: #{containers.join(', ')}"
-      end
+      check_container(container, running_containers(image), "running #{image} sandbox")
 
       # Without a terminal on stdin docker refuses -t, which breaks pipes and scripts
       tty_args = $stdin.tty? ? ['-it'] : ['-i']
@@ -236,10 +246,62 @@ module Sndbx
     end
   end
 
+  class ResumeCommand
+    include Command
+    include Docker
+
+    private
+
+    def parse
+      list = false
+
+      OptionParser.new do |opts|
+        opts.banner = 'Usage: sndbx resume IMAGE CONTAINER | IMAGE --list'
+        opts.separator ''
+        opts.separator 'Restarts a stopped sandbox of IMAGE, kept by run --keep, and attaches to it,'
+        opts.separator 'like docker start -ai.'
+        opts.separator ''
+
+        opts.on('-l', '--list', "Print IMAGE's stopped containers") do
+          list = true
+        end
+
+        help_option(opts)
+      end.parse!
+
+      if list
+        raise Error, 'expected exactly one image' unless ARGV.length == 1
+
+        return { image: ARGV.first, list: true }
+      end
+
+      raise Error, 'expected an image and a container' unless ARGV.length == 2
+
+      { image: ARGV[0], container: ARGV[1] }
+    end
+
+    def run(image:, list: false, container: nil)
+      if list
+        check_docker
+        stopped_containers(image).each { |name| puts name }
+      else
+        Settings.new.image(image)
+        check_docker
+        check_container(container, stopped_containers(image), "stopped #{image} sandbox")
+        exec(DOCKER, 'start', '-ai', container)
+      end
+    end
+  end
+
   class CLI
     include Command
 
-    COMMANDS = { 'run' => RunCommand, 'build' => BuildCommand, 'exec' => ExecCommand }.freeze
+    COMMANDS = {
+      'run' => RunCommand,
+      'build' => BuildCommand,
+      'exec' => ExecCommand,
+      'resume' => ResumeCommand
+    }.freeze
 
     private
 
@@ -253,6 +315,7 @@ module Sndbx
         opts.separator '    run IMAGE                       Run a sandboxed image'
         opts.separator '    build IMAGE                     Build an image'
         opts.separator '    exec IMAGE CONTAINER COMMAND    Run a command in a running sandbox'
+        opts.separator '    resume IMAGE CONTAINER          Restart a stopped sandbox'
         opts.separator ''
         opts.separator "Run 'sndbx command --help' for a command's options."
         opts.separator ''

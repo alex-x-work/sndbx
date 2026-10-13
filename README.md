@@ -48,7 +48,7 @@ FROM ${TAG_PREFIX}:base
 - mounts the image's config directory at `/home/<user>/<config_target>`
 - publishes the image's `ports` plus each `-p PORT`
 - passes the image's `docker_args` plus everything after `--` to `docker run`
-- labels the container `sndbx.image=<name>`, which `sndbx exec` finds it by
+- labels the container `sndbx.image=<name>`, which `sndbx exec` and `sndbx resume` find it by
 
 ### Install
 
@@ -97,11 +97,13 @@ sndbx run claude -v ../api -v ../web -w api           # mount several, start in 
 sndbx run claude -v ./garmin/sdk:/opt/garmin/sdk:ro   # also mount a read-only SDK, still start in the current directory
 sndbx run claude -p 3000 -p 8080:80                   # publish ports, 3000 means 3000:3000
 sndbx run claude -- --memory=8g -e FOO=bar            # pass extra arguments to docker run
-sndbx run claude -k                                   # keep the container after it exits, docker start -ai restarts it
+sndbx run claude -k                                   # keep the container after it exits, for sndbx resume
 sndbx run --list                                      # print configured image names
 sndbx exec claude gifted_mcnulty bash                 # run a command in a running claude sandbox, like docker exec -it
 sndbx exec -u root claude gifted_mcnulty bash         # as root
 sndbx exec claude --list                              # print the running claude sandboxes
+sndbx resume claude sleepy_babbage                    # restart a stopped claude sandbox, like docker start -ai
+sndbx resume claude --list                            # print the stopped claude sandboxes
 sndbx --version
 ```
 
