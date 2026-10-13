@@ -4,10 +4,11 @@
 require 'English'
 require 'fileutils'
 require 'optparse'
+require 'shellwords'
 require 'yaml'
 
 module Sndbx
-  VERSION = '0.17.0'
+  VERSION = '0.18.0'
 
   class Error < StandardError; end
 
@@ -29,6 +30,7 @@ module Sndbx
   module Docker
     DOCKER = 'docker'
     IMAGE_LABEL = 'sndbx.image'
+    LOG_PATH = File.join(Dir.home, '.local', 'state', 'sndbx', 'sndbx.log').freeze
 
     private
 
@@ -64,6 +66,24 @@ module Sndbx
       return if containers.include?(container)
 
       raise Error, "container '#{container}' is not a #{description}, expected one of: #{containers.join(', ')}"
+    end
+
+    def docker_exec(*args)
+      log_command(args)
+      exec(DOCKER, *args)
+    end
+
+    def docker_system(*args)
+      log_command(args)
+      system(DOCKER, *args)
+    end
+
+    # A log that can't be written doesn't stop the command
+    def log_command(args)
+      FileUtils.mkdir_p(File.dirname(LOG_PATH))
+      File.write(LOG_PATH, "#{Time.now.strftime('%FT%T%:z')} #{Shellwords.join([DOCKER, *args])}\n", mode: 'a')
+    rescue SystemCallError => e
+      warn("Warning: can't write #{LOG_PATH}: #{e.message}")
     end
 
     def quiet_system(*command)
@@ -242,7 +262,7 @@ module Sndbx
       # Without a terminal on stdin docker refuses -t, which breaks pipes and scripts
       tty_args = $stdin.tty? ? ['-it'] : ['-i']
       user_args = user ? ["--user=#{user}"] : []
-      exec(DOCKER, 'exec', *tty_args, *user_args, container, *command)
+      docker_exec('exec', *tty_args, *user_args, container, *command)
     end
   end
 
@@ -288,7 +308,7 @@ module Sndbx
         Settings.new.image(image)
         check_docker
         check_container(container, stopped_containers(image), "stopped #{image} sandbox")
-        exec(DOCKER, 'start', '-ai', container)
+        docker_exec('start', '-ai', container)
       end
     end
   end
@@ -515,7 +535,7 @@ module Sndbx
       args = needs_base?(name) ? ['--build-arg', "TAG_PREFIX=#{@tag_prefix}"] : []
 
       puts "==> Building #{tag} from #{image_dir(name)}"
-      built = system(DOCKER, 'build', '--no-cache', *args, '-t', tag, image_dir(name))
+      built = docker_system('build', '--no-cache', *args, '-t', tag, image_dir(name))
       raise Error, "failed to build #{tag}" unless built
     end
 
@@ -567,8 +587,8 @@ module Sndbx
       check_workdir
       FileUtils.mkdir_p(@image[:config_dir])
 
-      exec(DOCKER, 'run', *('--rm' unless @keep), '-it', "--label=#{IMAGE_LABEL}=#{@image[:name]}",
-           "--workdir=#{@workdir}", *volume_args, *port_args, *@docker_args, @image[:tag])
+      docker_exec('run', *('--rm' unless @keep), '-it', "--label=#{IMAGE_LABEL}=#{@image[:name]}",
+                  "--workdir=#{@workdir}", *volume_args, *port_args, *@docker_args, @image[:tag])
     end
 
     private

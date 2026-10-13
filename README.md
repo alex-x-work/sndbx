@@ -49,6 +49,7 @@ FROM ${TAG_PREFIX}:base
 - publishes the image's `ports` plus each `-p PORT`
 - passes the image's `docker_args` plus everything after `--` to `docker run`
 - labels the container `sndbx.image=<name>`, which `sndbx exec` and `sndbx resume` find it by
+- logs each `docker run`, `exec`, `start` and `build` it runs to `~/.local/state/sndbx/sndbx.log`
 
 ### Install
 

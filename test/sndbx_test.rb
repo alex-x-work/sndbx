@@ -2,6 +2,7 @@
 
 require_relative 'test_helper'
 require 'pty'
+require 'shellwords'
 
 class SndbxTest < Minitest::Test
   include SndbxTestHelper
@@ -813,7 +814,65 @@ class SndbxTest < Minitest::Test
     assert_error 'expected exactly one image', sndbx('resume', 'claude', 'sleepy_babbage', '--list')
   end
 
+  def test_logs_docker_commands
+    write_resume_settings
+    add_docker_image('sndbx:claude')
+    dir = mkdir('work/project/my dir')
+
+    sndbx('run', 'claude', '-v', dir)
+    sndbx('exec', 'claude', 'gifted_mcnulty', 'bash')
+    sndbx('resume', 'claude', 'sleepy_babbage')
+
+    assert_equal [['docker', *run_options('my dir'), '-v', "#{dir}:/workspace/my dir", *config_volume, 'sndbx:claude'],
+                  %w[docker exec -i gifted_mcnulty bash],
+                  %w[docker start -ai sleepy_babbage]],
+                 logged_commands
+    assert(log_lines.all? { |line| line.match?(/\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d docker /) })
+  end
+
+  def test_logs_builds
+    write_build_settings
+
+    sndbx('build', 'plain')
+
+    assert_equal [['docker', 'build', '--no-cache', '-t', 'sndbx:plain', File.join(@images_dir, 'plain')]],
+                 logged_commands
+  end
+
+  def test_does_not_log_lists
+    write_resume_settings
+
+    sndbx('run', '--list')
+    sndbx('exec', 'claude', '--list')
+    sndbx('resume', 'claude', '--list')
+
+    refute File.exist?(log_path)
+  end
+
+  def test_runs_when_the_log_cannot_be_written
+    write_claude_settings
+    File.write(mkdir('home/.local').then { |dir| File.join(dir, 'state') }, '')
+
+    result = sndbx('run', 'claude')
+
+    assert_predicate result, :success?
+    assert_match(/\AWarning: can't write #{Regexp.escape(log_path)}: /, result.err)
+    assert_equal run_options('project'), docker_calls.last.first(5)
+  end
+
   private
+
+  def log_path
+    File.join(@home, '.local', 'state', 'sndbx', 'sndbx.log')
+  end
+
+  def log_lines
+    File.readlines(log_path, chomp: true)
+  end
+
+  def logged_commands
+    log_lines.map { |line| Shellwords.split(line.split(' ', 2).last) }
+  end
 
   def sndbx(*args, docker: true, env: {})
     super(*args, env: {
