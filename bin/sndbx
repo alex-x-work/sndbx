@@ -7,7 +7,7 @@ require 'optparse'
 require 'yaml'
 
 module Sndbx
-  VERSION = '0.15.1'
+  VERSION = '0.16.0'
 
   class Error < StandardError; end
 
@@ -65,6 +65,7 @@ module Sndbx
       volumes = []
       ports = []
       workdir = nil
+      keep = false
       separator = ARGV.index('--')
       docker_args = separator ? ARGV.slice!(separator..).drop(1) : []
 
@@ -91,6 +92,10 @@ module Sndbx
           ports.push(port)
         end
 
+        opts.on('-k', '--keep', "Keep the container after it exits, docker run's --rm otherwise removes it") do
+          keep = true
+        end
+
         opts.on('-l', '--list', 'Print image names') do
           puts Settings.new.image_names if File.exist?(Settings::PATH)
           exit(0)
@@ -101,7 +106,8 @@ module Sndbx
 
       raise Error, 'expected exactly one image' unless ARGV.length == 1
 
-      { image: ARGV.first, volumes: volumes, ports: ports, workdir: workdir, docker_args: docker_args }
+      { image: ARGV.first, volumes: volumes, ports: ports, workdir: workdir, keep: keep,
+        docker_args: docker_args }
     end
 
     def run(image:, **options)
@@ -476,7 +482,6 @@ module Sndbx
   class Sandbox
     include Docker
 
-    RUN_OPTIONS = ['run', '--rm', '-it'].freeze
     MOUNT_ROOT = '/workspace'
     PORT_FORMAT = %r{\A(?:[\d.]+:)?\d+(?::\d+)?(?:/(?:tcp|udp))?\z}.freeze
     BARE_PORT_FORMAT = %r{\A(\d+)(/(?:tcp|udp))?\z}.freeze
@@ -484,8 +489,9 @@ module Sndbx
     VOLUME_FORMAT = /\A([^:]+)(?::([^:]+))?(?::([^:]+))?\z/.freeze
     FORBIDDEN_DIRS = [Dir.home, '/'].freeze
 
-    def initialize(image:, volumes:, ports:, workdir:, docker_args:)
+    def initialize(image:, volumes:, ports:, workdir:, keep:, docker_args:)
       @image = image
+      @keep = keep
       @docker_args = image[:docker_args] + docker_args
       @volumes = volumes(volumes)
       @ports = (image[:ports] + ports).map { |port| normalize_port(port) }.uniq
@@ -498,8 +504,8 @@ module Sndbx
       check_workdir
       FileUtils.mkdir_p(@image[:config_dir])
 
-      exec(DOCKER, *RUN_OPTIONS, "--label=#{IMAGE_LABEL}=#{@image[:name]}", "--workdir=#{@workdir}",
-           *volume_args, *port_args, *@docker_args, @image[:tag])
+      exec(DOCKER, 'run', *('--rm' unless @keep), '-it', "--label=#{IMAGE_LABEL}=#{@image[:name]}",
+           "--workdir=#{@workdir}", *volume_args, *port_args, *@docker_args, @image[:tag])
     end
 
     private

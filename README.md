@@ -97,6 +97,7 @@ sndbx run claude -v ../api -v ../web -w api           # mount several, start in 
 sndbx run claude -v ./garmin/sdk:/opt/garmin/sdk:ro   # also mount a read-only SDK, still start in the current directory
 sndbx run claude -p 3000 -p 8080:80                   # publish ports, 3000 means 3000:3000
 sndbx run claude -- --memory=8g -e FOO=bar            # pass extra arguments to docker run
+sndbx run claude -k                                   # keep the container after it exits, docker start -ai restarts it
 sndbx run --list                                      # print configured image names
 sndbx exec claude gifted_mcnulty bash                 # run a command in a running claude sandbox, like docker exec -it
 sndbx exec -u root claude gifted_mcnulty bash         # as root

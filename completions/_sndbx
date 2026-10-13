@@ -202,7 +202,7 @@ _sndbx() {
           ;;
         *)
           if [[ "${cur}" == -* ]]; then
-            mapfile -t COMPREPLY < <(compgen -W '-v --volume -w --workdir -p --publish -l --list -h --help' -- "${cur}")
+            mapfile -t COMPREPLY < <(compgen -W '-v --volume -w --workdir -p --publish -k --keep -l --list -h --help' -- "${cur}")
           elif (( ! has_image )); then
             mapfile -t COMPREPLY < <(compgen -W "$(sndbx run --list 2>/dev/null)" -- "${cur}")
           else

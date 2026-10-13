@@ -365,6 +365,16 @@ class SndbxTest < Minitest::Test
                  docker_calls.last
   end
 
+  def test_run_keeps_the_container
+    write_claude_settings
+
+    sndbx('run', 'claude', '--keep')
+
+    assert_equal ['run', '-it', '--label=sndbx.image=claude', '--workdir=/workspace/project', *volume('project'),
+                  *config_volume, 'sndbx:claude'],
+                 docker_calls.last
+  end
+
   def test_invalid_port
     write_claude_settings
 
