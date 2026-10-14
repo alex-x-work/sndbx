@@ -129,6 +129,8 @@ sndbx run claude -v W:\projects\api -v ..\web:/opt/web:ro
 
 On Windows a single letter before a colon is a drive, so `-v a:/opt/a` mounts the drive `A:`. Write `-v .\a:/opt/a` for a directory named `a`.
 
+The log of docker commands is in `%USERPROFILE%\.local\state\sndbx\sndbx.log`. `sndbx logs` follows it by itself, so it doesn't need `tail`.
+
 For PowerShell completions, dot-source `completions/sndbx.ps1` from your profile:
 
 ```powershell

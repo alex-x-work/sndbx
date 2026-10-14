@@ -35,9 +35,11 @@ FAKE_DOCKER = textwrap.dedent('''\
     if args[:2] == ['image', 'inspect']:
         sys.exit(0 if args[2] in read_lines('DOCKER_IMAGES') else 1)
     if args[:1] == ['ps']:
+        # Running containers, or with --all those whose status the filter names
+        status = next((arg[7:] for arg in args if arg.startswith('status=')), None) if '--all' in args else 'running'
         for line in read_lines('DOCKER_CONTAINERS'):
-            image, name = line.split()
-            if args[2] == f'label=sndbx.image={image}':
+            image, name, state = (line.split() + ['running'])[:3]
+            if f'label=sndbx.image={image}' in args and state == status:
                 print(name)
         sys.exit(0)
     if args[:1] == ['build']:
@@ -138,9 +140,9 @@ class SndbxTestCase(unittest.TestCase):
         with open(self.docker_images, 'a', encoding='utf-8') as file:
             file.write(f'{tag}\n')
 
-    def add_docker_container(self, image, name):
+    def add_docker_container(self, image, name, state='running'):
         with open(self.docker_containers, 'a', encoding='utf-8') as file:
-            file.write(f'{image} {name}\n')
+            file.write(f'{image} {name} {state}\n')
 
     def docker_calls(self):
         if not os.path.exists(self.docker_log):

@@ -1,8 +1,13 @@
 """Tests of bin/sndbx.py, ported from test/sndbx_test.rb."""
 
+import contextlib
 import os
 import re
+import shlex
 import subprocess
+import sys
+import threading
+import time
 import unittest
 
 import yaml
@@ -33,6 +38,12 @@ class SndbxTest(SndbxTestCase):
     def test_exec_help(self):
         self.assert_help('Usage: sndbx exec IMAGE CONTAINER COMMAND [ARGS] | IMAGE --list', self.sndbx('exec', '-h'))
 
+    def test_resume_help(self):
+        self.assert_help('Usage: sndbx resume IMAGE CONTAINER | IMAGE --list', self.sndbx('resume', '-h'))
+
+    def test_logs_help(self):
+        self.assert_help('Usage: sndbx logs [options]', self.sndbx('logs', '-h'))
+
     def test_version(self):
         result = self.sndbx('-V')
 
@@ -40,7 +51,7 @@ class SndbxTest(SndbxTestCase):
         self.assertRegex(result.out, r'\Asndbx \d+\.\d+\.\d+\n\Z')
 
     def test_unknown_command(self):
-        self.assert_error("unknown command 'foo', expected one of: run, build, exec", self.sndbx('foo'))
+        self.assert_error("unknown command 'foo', expected one of: run, build, exec, resume, logs", self.sndbx('foo'))
 
     def test_invalid_option(self):
         self.assert_error('invalid option: --bogus', self.sndbx('--bogus'))
@@ -339,6 +350,15 @@ class SndbxTest(SndbxTestCase):
         self.assertEqual([*self.run_options('project'), *self.volume('project'), *self.config_volume(),
                           '-p', '127.0.0.1:3080:3080', '-p', '3000:3000', '-p', '8080:80', '-p', '53:53/udp',
                           'sndbx:claude'],
+                         self.docker_calls()[-1])
+
+    def test_run_keeps_the_container(self):
+        self.write_claude_settings()
+
+        self.sndbx('run', 'claude', '--keep')
+
+        self.assertEqual(['run', '-it', '--label=sndbx.image=claude', '--workdir=/workspace/project',
+                          *self.volume('project'), *self.config_volume(), 'sndbx:claude'],
                          self.docker_calls()[-1])
 
     def test_invalid_port(self):
@@ -674,6 +694,131 @@ class SndbxTest(SndbxTestCase):
         self.assert_error('expected exactly one image', self.sndbx('exec', '--list'))
         self.assert_error('expected exactly one image', self.sndbx('exec', 'claude', 'gifted_mcnulty', '--list'))
 
+    def test_resume(self):
+        self.write_resume_settings()
+
+        self.sndbx('resume', 'claude', 'sleepy_babbage')
+
+        self.assertEqual([['info'],
+                          ['ps', '--all', '--filter', 'status=exited', '--filter', 'label=sndbx.image=claude',
+                           '--format', '{{.Names}}'],
+                          ['start', '-ai', 'sleepy_babbage']],
+                         self.docker_calls())
+
+    def test_resume_running_container(self):
+        self.write_resume_settings()
+
+        self.assert_error("container 'gifted_mcnulty' is not a stopped claude sandbox, expected one of: sleepy_babbage",
+                          self.sndbx('resume', 'claude', 'gifted_mcnulty'))
+        self.assertEqual([], self.docker_starts())
+
+    def test_resume_without_stopped_containers(self):
+        self.write_exec_settings()
+
+        self.assert_error('no stopped claude sandbox', self.sndbx('resume', 'claude', 'gifted_mcnulty'))
+
+    def test_resume_unknown_image(self):
+        self.write_resume_settings()
+
+        self.assert_error("unknown image 'nope', expected one of: claude, codex",
+                          self.sndbx('resume', 'nope', 'sleepy_babbage'))
+
+    def test_resume_needs_an_image_and_a_container(self):
+        self.write_resume_settings()
+
+        self.assert_error('expected an image and a container', self.sndbx('resume'))
+        self.assert_error('expected an image and a container', self.sndbx('resume', 'claude'))
+        self.assert_error('expected an image and a container',
+                          self.sndbx('resume', 'claude', 'sleepy_babbage', 'bash'))
+
+    def test_resume_without_docker(self):
+        self.write_resume_settings()
+
+        self.assert_error('docker is not installed', self.sndbx('resume', 'claude', 'sleepy_babbage', docker=False))
+
+    def test_resume_list(self):
+        self.write_resume_settings()
+
+        self.assertEqual('sleepy_babbage\n', self.sndbx('resume', 'claude', '--list').out)
+        self.assertEqual('', self.sndbx('resume', '-l', 'codex').out)
+
+    def test_resume_list_needs_one_image(self):
+        self.assert_error('expected exactly one image', self.sndbx('resume', '--list'))
+        self.assert_error('expected exactly one image', self.sndbx('resume', 'claude', 'sleepy_babbage', '--list'))
+
+    def test_logs_docker_commands(self):
+        self.write_resume_settings()
+        self.add_docker_image('sndbx:claude')
+        directory = self.mkdir('work/project/my dir')
+
+        self.sndbx('run', 'claude', '-v', directory)
+        self.sndbx('exec', 'claude', 'gifted_mcnulty', 'bash')
+        self.sndbx('resume', 'claude', 'sleepy_babbage')
+
+        self.assertEqual([['docker', *self.run_options('my dir'), '-v', f'{directory}:/workspace/my dir',
+                           *self.config_volume(), 'sndbx:claude'],
+                          ['docker', 'exec', '-i', 'gifted_mcnulty', 'bash'],
+                          ['docker', 'start', '-ai', 'sleepy_babbage']],
+                         self.logged_commands())
+        for line in self.log_lines():
+            self.assertRegex(line, r'\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d docker ')
+
+    def test_logs_builds(self):
+        self.write_build_settings()
+
+        self.sndbx('build', 'plain')
+
+        self.assertEqual([['docker', 'build', '--no-cache', '-t', 'sndbx:plain', os.path.join(self.images_dir, 'plain')]],
+                         self.logged_commands())
+
+    def test_does_not_log_lists(self):
+        self.write_resume_settings()
+
+        self.sndbx('run', '--list')
+        self.sndbx('exec', 'claude', '--list')
+        self.sndbx('resume', 'claude', '--list')
+
+        self.assertFalse(os.path.exists(self.log_path()))
+
+    def test_runs_when_the_log_cannot_be_written(self):
+        self.write_claude_settings()
+        self.write_file(os.path.join(self.mkdir('home/.local'), 'state'))
+
+        result = self.sndbx('run', 'claude')
+
+        self.assertTrue(result.success, result.err)
+        self.assertRegex(result.err, rf"\AWarning: can't write {re.escape(self.log_path())}: ")
+        self.assertEqual(self.run_options('project'), self.docker_calls()[-1][:5])
+
+    def test_logs_follows_the_log(self):
+        self.write_log(*(f'line {number}' for number in range(1, 13)))
+
+        with self.follow_log() as logs:
+            self.assertEqual([f'line {number}' for number in range(3, 13)], self.read_lines(logs, 10))
+            self.append_log('line 13')
+            self.assertEqual(['line 13'], self.read_lines(logs, 1))
+
+    def test_logs_with_lines(self):
+        self.write_log('line 1', 'line 2', 'line 3')
+
+        with self.follow_log('-n', '2') as logs:
+            self.assertEqual(['line 2', 'line 3'], self.read_lines(logs, 2))
+
+        # Lines appended before it reaches the end are skipped too, so append until one shows up
+        with self.follow_log('--lines=0') as logs:
+            self.assertEqual(['line 4'], self.read_lines(logs, 1, while_waiting=lambda: self.append_log('line 4')))
+
+    def test_logs_without_a_log(self):
+        self.assert_error(f'no log yet at {self.log_path()}', self.sndbx('logs'))
+
+    def test_logs_needs_a_line_count(self):
+        self.assert_error('invalid argument: -n x', self.sndbx('logs', '-n', 'x'))
+        self.assert_error('invalid argument: --lines=x', self.sndbx('logs', '--lines=x'))
+        self.assert_error('expected a line count of 0 or more', self.sndbx('logs', '-n', '-1'))
+
+    def test_logs_takes_no_arguments(self):
+        self.assert_error('expected no arguments', self.sndbx('logs', 'claude'))
+
     def assert_error(self, message, result):
         self.assertFalse(result.success)
         self.assertEqual(f'Error: {message}.\n', result.err)
@@ -700,8 +845,59 @@ class SndbxTest(SndbxTestCase):
         self.add_docker_container('codex', 'eager_turing')
         self.add_docker_container('claude', 'quirky_hopper')
 
+    def write_resume_settings(self):
+        self.write_exec_settings()
+        self.add_docker_container('claude', 'sleepy_babbage', 'exited')
+
+    def log_path(self):
+        return os.path.join(self.home, '.local', 'state', 'sndbx', 'sndbx.log')
+
+    def log_lines(self):
+        with open(self.log_path(), encoding='utf-8') as file:
+            return file.read().splitlines()
+
+    def logged_commands(self):
+        return [shlex.split(line.split(' ', 1)[1]) for line in self.log_lines()]
+
+    def write_log(self, *lines):
+        os.makedirs(os.path.dirname(self.log_path()), exist_ok=True)
+        self.write_file(self.log_path(), ''.join(f'{line}\n' for line in lines))
+
+    def append_log(self, line):
+        with open(self.log_path(), 'a', encoding='utf-8') as file:
+            file.write(f'{line}\n')
+
+    @contextlib.contextmanager
+    def follow_log(self, *args):
+        """Starts sndbx logs, which only stops when killed."""
+        process = subprocess.Popen([sys.executable, BIN, 'logs', *args], cwd=self.work, env=self.env(),
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            yield process
+        finally:
+            process.kill()
+            process.wait()
+            process.stdout.close()
+
+    def read_lines(self, process, count, while_waiting=lambda: None):
+        """Reads COUNT lines from PROCESS, calling WHILE_WAITING every so often, and fails instead of hanging
+        when they don't come."""
+        lines = []
+        reader = threading.Thread(target=lambda: lines.extend(process.stdout.readline().decode().rstrip('\r\n')
+                                                               for _ in range(count)), daemon=True)
+        reader.start()
+        deadline = time.monotonic() + 10
+        while reader.is_alive() and time.monotonic() < deadline:
+            while_waiting()
+            reader.join(0.2)
+        self.assertFalse(reader.is_alive(), f'expected {count} lines, got {lines}')
+        return lines
+
     def docker_execs(self):
         return [call for call in self.docker_calls() if call[0] == 'exec']
+
+    def docker_starts(self):
+        return [call for call in self.docker_calls() if call[0] == 'start']
 
     def docker_builds(self):
         return [call for call in self.docker_calls() if call[0] == 'build']

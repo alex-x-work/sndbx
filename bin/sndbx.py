@@ -5,21 +5,25 @@
 # ///
 """A port of bin/sndbx to Python that also runs on Windows."""
 
+import collections
 import json
 import os
 import posixpath
 import re
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import time
+from datetime import datetime
 
 try:
     import yaml
 except ImportError:
     sys.exit('Error: PyYAML is missing, pip install pyyaml or run via uv run --script.')
 
-VERSION = '0.15.1'
+VERSION = '0.19.0'
 WINDOWS = os.name == 'nt'
 
 
@@ -58,11 +62,14 @@ class OptionParser:
     WIDTH = 32
     INDENT = ' ' * 4
 
+    INTEGER_FORMAT = re.compile(r'[-+]?\d+', re.ASCII)
+
     class Option:
-        def __init__(self, short, long, arg, handler):
+        def __init__(self, short, long, arg, integer, handler):
             self.short = short
             self.long = long
             self.arg = arg
+            self.integer = integer
             self.handler = handler
 
     def __init__(self, banner):
@@ -72,8 +79,8 @@ class OptionParser:
     def separator(self, line=''):
         self._lines.append(line)
 
-    def on(self, short, long, *description, handler, arg=None):
-        self._options.append(self.Option(short, long, arg, handler))
+    def on(self, short, long, *description, handler, arg=None, integer=False):
+        self._options.append(self.Option(short, long, arg, integer, handler))
 
         left = f'{short}, {long}' + (f'={arg}' if arg else '')
         right = list(description)
@@ -129,7 +136,7 @@ class OptionParser:
             if not args:
                 raise ParseError(f'missing argument: {name}')
             value = args.pop(0)
-        option.handler(value)
+        option.handler(self._convert(option, value, arg if equals else f'{name} {value}'))
 
     def _parse_short(self, arg, args):
         letters = arg[1:]
@@ -146,8 +153,16 @@ class OptionParser:
                 if not args:
                     raise ParseError(f'missing argument: {name}')
                 letters = args.pop(0)
-            option.handler(letters)
+            option.handler(self._convert(option, letters, f'{name} {letters}'))
             return
+
+    def _convert(self, option, value, given):
+        """Converts the value of an integer option, like Ruby's OptionParser with Integer."""
+        if not option.integer:
+            return value
+        if not self.INTEGER_FORMAT.fullmatch(value):
+            raise ParseError(f'invalid argument: {given}')
+        return int(value)
 
 
 def help_option(parser):
@@ -162,6 +177,7 @@ def help_option(parser):
 
 DOCKER = 'docker'
 IMAGE_LABEL = 'sndbx.image'
+LOG_PATH = os.path.join(os.path.expanduser('~'), '.local', 'state', 'sndbx', 'sndbx.log')
 
 
 def docker_command(*args):
@@ -175,6 +191,7 @@ def system(*args):
     command = docker_command(*args)
     if command is None:
         return None
+    log_command(args)
     sys.stdout.flush()
     return subprocess.run(command).returncode == 0
 
@@ -199,12 +216,40 @@ def image_exists(tag):
 
 
 def running_containers(image):
-    command = docker_command('ps', '--filter', f'label={IMAGE_LABEL}={image}', '--format', '{{.Names}}')
+    return containers(image)
+
+
+def stopped_containers(image):
+    return containers(image, '--all', '--filter', 'status=exited')
+
+
+def containers(image, *ps_args):
+    command = docker_command('ps', *ps_args, '--filter', f'label={IMAGE_LABEL}={image}', '--format', '{{.Names}}')
     result = command and subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     if not result or result.returncode != 0:
-        raise Error('failed to list running containers')
+        raise Error('failed to list containers')
 
     return result.stdout.splitlines()
+
+
+def check_container(container, containers, description):
+    if not containers:
+        raise Error(f'no {description}')
+    if container in containers:
+        return
+
+    raise Error(f"container '{container}' is not a {description}, expected one of: {', '.join(containers)}")
+
+
+def log_command(args):
+    """Appends the docker command to LOG_PATH. A log that can't be written doesn't stop the command."""
+    line = f"{datetime.now().astimezone().isoformat(timespec='seconds')} {shlex.join([DOCKER, *args])}\n"
+    try:
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+        with open(LOG_PATH, 'a', encoding='utf-8') as log:
+            log.write(line)
+    except OSError as error:
+        sys.stderr.write(f"Warning: can't write {LOG_PATH}: {error.strerror or error}\n")
 
 
 def stdin_is_terminal():
@@ -224,6 +269,7 @@ def stdin_is_terminal():
 
 def exec_docker(*args):
     command = docker_command(*args)
+    log_command(args)
     sys.stdout.flush()
     if not WINDOWS:
         os.execv(command[0], [DOCKER, *args])
@@ -244,6 +290,7 @@ class RunCommand:
         volumes = []
         ports = []
         workdir = None
+        keep = False
         docker_args = []
         if '--' in args:
             separator = args.index('--')
@@ -252,6 +299,10 @@ class RunCommand:
         def set_workdir(name):
             nonlocal workdir
             workdir = name
+
+        def set_keep():
+            nonlocal keep
+            keep = True
 
         def list_images():
             if os.path.exists(Settings.PATH):
@@ -275,6 +326,8 @@ class RunCommand:
                   arg='NAME', handler=set_workdir)
         parser.on('-p', '--publish', 'Publish a port as HOST:CONTAINER, PORT means PORT:PORT, repeatable',
                   arg='PORT', handler=ports.append)
+        parser.on('-k', '--keep', "Keep the container after it exits, docker run's --rm otherwise removes it",
+                  handler=set_keep)
         parser.on('-l', '--list', 'Print image names', handler=list_images)
         help_option(parser)
 
@@ -282,7 +335,7 @@ class RunCommand:
         if len(positionals) != 1:
             raise Error('expected exactly one image')
 
-        return {'image': positionals[0], 'volumes': volumes, 'ports': ports, 'workdir': workdir,
+        return {'image': positionals[0], 'volumes': volumes, 'ports': ports, 'workdir': workdir, 'keep': keep,
                 'docker_args': docker_args}
 
     def run(self, image, **options):
@@ -389,17 +442,110 @@ class ExecCommand:
 
     def exec_in(self, image, container, command, user):
         check_docker()
-        containers = running_containers(image)
-        if not containers:
-            raise Error(f'no running {image} sandbox')
-        if container not in containers:
-            raise Error(f"container '{container}' is not a running {image} sandbox, "
-                        f"expected one of: {', '.join(containers)}")
+        check_container(container, running_containers(image), f'running {image} sandbox')
 
         # Without a terminal on stdin docker refuses -t, which breaks pipes and scripts
         tty_args = ['-it'] if stdin_is_terminal() else ['-i']
         user_args = [f'--user={user}'] if user else []
         exec_docker('exec', *tty_args, *user_args, container, *command)
+
+
+class ResumeCommand:
+    def call(self, args):
+        self.run(**self.parse(args))
+
+    def parse(self, args):
+        list_containers = False
+
+        def set_list():
+            nonlocal list_containers
+            list_containers = True
+
+        parser = OptionParser('Usage: sndbx resume IMAGE CONTAINER | IMAGE --list')
+        parser.separator()
+        parser.separator('Restarts a stopped sandbox of IMAGE, kept by run --keep, and attaches to it,')
+        parser.separator('like docker start -ai.')
+        parser.separator()
+        parser.on('-l', '--list', "Print IMAGE's stopped containers", handler=set_list)
+        help_option(parser)
+
+        positionals = parser.permute(args)
+        if list_containers:
+            if len(positionals) != 1:
+                raise Error('expected exactly one image')
+
+            return {'image': positionals[0], 'list_containers': True}
+
+        if len(positionals) != 2:
+            raise Error('expected an image and a container')
+
+        return {'image': positionals[0], 'container': positionals[1]}
+
+    def run(self, image, list_containers=False, container=None):
+        if list_containers:
+            check_docker()
+            for name in stopped_containers(image):
+                print(name)
+        else:
+            Settings().image(image)
+            check_docker()
+            check_container(container, stopped_containers(image), f'stopped {image} sandbox')
+            exec_docker('start', '-ai', container)
+
+
+class LogsCommand:
+    """Follows the log like tail -f, by itself since Windows has no tail."""
+
+    POLL_SECONDS = 0.2
+
+    def call(self, args):
+        self.run(**self.parse(args))
+
+    def parse(self, args):
+        lines = 10
+
+        def set_lines(count):
+            nonlocal lines
+            if count < 0:
+                raise Error('expected a line count of 0 or more')
+            lines = count
+
+        parser = OptionParser('Usage: sndbx logs [options]')
+        parser.separator()
+        parser.separator(f'Follows {LOG_PATH}, the docker commands sndbx ran, like tail -f.')
+        parser.separator()
+        parser.on('-n', '--lines', f'Start with the last N lines, {lines} by default', arg='N', integer=True,
+                  handler=set_lines)
+        help_option(parser)
+
+        if parser.permute(args):
+            raise Error('expected no arguments')
+
+        return {'lines': lines}
+
+    def run(self, lines):
+        if not os.path.exists(LOG_PATH):
+            raise Error(f'no log yet at {LOG_PATH}')
+
+        out = sys.stdout.buffer
+        with open(LOG_PATH, 'rb') as log:
+            if lines:
+                out.writelines(collections.deque(log, maxlen=lines))
+            else:
+                log.seek(0, os.SEEK_END)
+            out.flush()
+
+            while True:
+                line = log.readline()
+                if line:
+                    out.write(line)
+                    out.flush()
+                    continue
+
+                # Start over when the log was truncated
+                if os.path.getsize(LOG_PATH) < log.tell():
+                    log.seek(0)
+                time.sleep(self.POLL_SECONDS)
 
 
 class CompleteCommand:
@@ -432,7 +578,13 @@ class CompleteCommand:
 
 
 class CLI:
-    COMMANDS = {'run': RunCommand, 'build': BuildCommand, 'exec': ExecCommand}
+    COMMANDS = {
+        'run': RunCommand,
+        'build': BuildCommand,
+        'exec': ExecCommand,
+        'resume': ResumeCommand,
+        'logs': LogsCommand,
+    }
     HIDDEN_COMMANDS = {'__complete': CompleteCommand}
 
     def call(self, args):
@@ -448,6 +600,8 @@ class CLI:
         parser.separator('    run IMAGE                       Run a sandboxed image')
         parser.separator('    build IMAGE                     Build an image')
         parser.separator('    exec IMAGE CONTAINER COMMAND    Run a command in a running sandbox')
+        parser.separator('    resume IMAGE CONTAINER          Restart a stopped sandbox')
+        parser.separator('    logs                            Follow the log of docker commands')
         parser.separator()
         parser.separator("Run 'sndbx command --help' for a command's options.")
         parser.separator()
@@ -669,7 +823,6 @@ class Builder:
 
 
 class Sandbox:
-    RUN_OPTIONS = ['run', '--rm', '-it']
     MOUNT_ROOT = '/workspace'
     PORT_FORMAT = re.compile(r'(?:[\d.]+:)?\d+(?::\d+)?(?:/(?:tcp|udp))?', re.ASCII)
     BARE_PORT_FORMAT = re.compile(r'(\d+)(/(?:tcp|udp))?', re.ASCII)
@@ -678,8 +831,9 @@ class Sandbox:
     VOLUME_FORMAT = re.compile(r'((?:[A-Za-z]:)?[^:]+)(?::([^:]+))?(?::([^:]+))?' if WINDOWS else
                                r'([^:]+)(?::([^:]+))?(?::([^:]+))?')
 
-    def __init__(self, image, volumes, ports, workdir, docker_args):
+    def __init__(self, image, volumes, ports, workdir, keep, docker_args):
         self._image = image
+        self._keep = keep
         self._docker_args = image['docker_args'] + docker_args
         self._volumes = self._parse_volumes(volumes)
         self._ports = list(dict.fromkeys(self._normalize_port(port) for port in image['ports'] + ports))
@@ -691,8 +845,9 @@ class Sandbox:
         self._check_workdir()
         os.makedirs(self._image['config_dir'], exist_ok=True)
 
-        exec_docker(*self.RUN_OPTIONS, f"--label={IMAGE_LABEL}={self._image['name']}", f'--workdir={self._workdir}',
-                    *self._volume_args(), *self._port_args(), *self._docker_args, self._image['tag'])
+        exec_docker('run', *([] if self._keep else ['--rm']), '-it', f"--label={IMAGE_LABEL}={self._image['name']}",
+                    f'--workdir={self._workdir}', *self._volume_args(), *self._port_args(), *self._docker_args,
+                    self._image['tag'])
 
     def _parse_volumes(self, specs):
         volumes = [self._parse_volume(spec) for spec in specs]
@@ -826,11 +981,15 @@ def complete_paths(prefix, directories_only=False):
 class Completer:
     """Completes like completions/_sndbx, on whole words: PowerShell doesn't split them at = and :."""
 
-    COMMANDS = ['run', 'build', 'exec']
+    COMMANDS = ['run', 'build', 'exec', 'resume', 'logs']
     CLI_OPTIONS = ['-V', '--version', '-h', '--help']
-    RUN_OPTIONS = ['-v', '--volume', '-w', '--workdir', '-p', '--publish', '-l', '--list', '-h', '--help']
+    RUN_OPTIONS = ['-v', '--volume', '-w', '--workdir', '-p', '--publish', '-k', '--keep', '-l', '--list', '-h',
+                   '--help']
     BUILD_OPTIONS = ['-a', '--all', '-l', '--list', '-h', '--help']
     EXEC_OPTIONS = ['-u', '--user', '-l', '--list', '-h', '--help']
+    RESUME_OPTIONS = ['-l', '--list', '-h', '--help']
+    LOGS_OPTIONS = ['-n', '--lines', '-h', '--help']
+    LINES = ('-n', '--lines')
     VOLUME = ('-v', '--volume')
     WORKDIR = ('-w', '--workdir')
     PUBLISH = ('-p', '--publish')
@@ -854,6 +1013,10 @@ class Completer:
             return self._build(words)
         if command == 'exec':
             return self._exec(words)
+        if command == 'resume':
+            return self._resume(words)
+        if command == 'logs':
+            return self._logs(words)
         return []
 
     def _matching(self, candidates, prefix=None):
@@ -971,6 +1134,28 @@ class Completer:
                 return self._matching(running_containers(positionals[0]))
             except Error:
                 return []
+        return []
+
+    def _resume(self, words):
+        """Completes the image, then its stopped containers."""
+        positionals = [word for word in words if not word.startswith('-')]
+        list_containers = any(word in ('-l', '--list') for word in words)
+
+        if len(positionals) >= 2 or (list_containers and positionals):
+            return []
+        if self._current.startswith('-'):
+            return self._matching(self.RESUME_OPTIONS)
+        if not positionals:
+            return self._matching(self._run_images())
+        try:
+            check_docker()
+            return self._matching(stopped_containers(positionals[0]))
+        except Error:
+            return []
+
+    def _logs(self, words):
+        if self._current.startswith('-') and not (words and words[-1] in self.LINES):
+            return self._matching(self.LOGS_OPTIONS)
         return []
 
     def _run_images(self):
