@@ -21,12 +21,13 @@ class CompletionTest(SndbxTestCase):
         return {**super().env(docker, **env), 'PATH': os.pathsep.join([self.bin, os.environ['PATH']])}
 
     def test_options_match_help(self):
-        for command in [[], ['run'], ['build'], ['exec']]:
+        for command in [[], ['run'], ['build'], ['exec'], ['resume'], ['logs']]:
             self.assertEqual(self.help_options(*command), self.complete(*command, '-'), f'options of {command}')
 
     def test_commands(self):
-        self.assertEqual(['build', 'exec', 'run'], self.complete(''))
-        self.assertEqual(['run'], self.complete('r'))
+        self.assertEqual(['build', 'exec', 'logs', 'resume', 'run'], self.complete(''))
+        self.assertEqual(['resume', 'run'], self.complete('r'))
+        self.assertEqual(['run'], self.complete('ru'))
 
     def test_hidden_command_needs_words(self):
         result = self.sndbx('__complete')
@@ -166,6 +167,38 @@ class CompletionTest(SndbxTestCase):
         self.assertEqual([], self.complete('exec', 'claude', '--list', ''))
         self.assertEqual([], self.complete('exec', '-l', 'claude', ''))
         self.assertEqual(['claude', 'codex'], self.complete('exec', '--list', ''))
+
+    def test_resume_images(self):
+        self.write_images_settings()
+
+        self.assertEqual(['claude', 'codex'], self.complete('resume', ''))
+
+    def test_resume_containers(self):
+        self.write_images_settings()
+        self.add_docker_container('claude', 'sleepy_babbage', 'exited')
+        self.add_docker_container('claude', 'zen_lovelace', 'exited')
+        self.add_docker_container('claude', 'gifted_mcnulty')
+
+        self.assertEqual(['sleepy_babbage', 'zen_lovelace'], self.complete('resume', 'claude', ''))
+        self.assertEqual(['zen_lovelace'], self.complete('resume', 'claude', 'z'))
+        self.assertEqual([['info'],
+                          ['ps', '--all', '--filter', 'status=exited', '--filter', 'label=sndbx.image=claude',
+                           '--format', '{{.Names}}']],
+                         self.docker_calls()[-2:])
+
+    def test_resume_completes_nothing_after_the_container(self):
+        self.write_images_settings()
+
+        self.assertEqual([], self.complete('resume', 'claude', 'sleepy_babbage', ''))
+        self.assertEqual([], self.complete('resume', 'claude', '--list', ''))
+        self.assertEqual(['claude', 'codex'], self.complete('resume', '--list', ''))
+
+    def test_logs_completes_nothing_but_options(self):
+        self.write_images_settings()
+
+        self.assertEqual([], self.complete('logs', ''))
+        self.assertEqual([], self.complete('logs', '-n', ''))
+        self.assertEqual([], self.complete('logs', '-n', '-'))
 
     def test_volume_completes_directories(self):
         self.mkdir('work/project/src')
