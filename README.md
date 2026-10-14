@@ -106,6 +106,31 @@ sndbx --version
 
 `sndbx exec` finds sandboxes by their `sndbx.image` label, so it doesn't see sandboxes started before sndbx 0.15.0. It passes `-t` to `docker exec` only when stdin is a terminal, so it works in pipes and scripts.
 
+### Python version, and Windows
+
+`bin/sndbx.py` is a port of `bin/sndbx` to Python 3.9+ that also runs on Windows. It takes the same commands, options and settings, so everything above applies to it too. It needs PyYAML, which `uv run --script` installs from the script's inline metadata:
+
+```sh
+uv run --script bin/sndbx.py run claude    # or: pip install pyyaml && python3 bin/sndbx.py run claude
+ln -s /path/to/sndbx/bin/sndbx.py ~/.local/bin/sndbx    # on Linux and macOS, instead of bin/sndbx
+```
+
+On Windows, put `bin` on `PATH`: `sndbx` then runs `bin/sndbx.cmd`, which starts `sndbx.py` with uv, or with `python` without uv. The settings are in `%USERPROFILE%\.config\sndbx\settings.yml`, and volumes take Windows paths:
+
+```powershell
+sndbx run claude -v W:\projects\api -v ..\web:/opt/web:ro
+```
+
+On Windows a single letter before a colon is a drive, so `-v a:/opt/a` mounts the drive `A:`. Write `-v .\a:/opt/a` for a directory named `a`.
+
+For PowerShell completions, dot-source `completions/sndbx.ps1` from your profile:
+
+```powershell
+Add-Content $PROFILE '. W:\path\to\sndbx\completions\sndbx.ps1'
+```
+
+They complete the same things as the bash completions. Windows PowerShell 5.1 doesn't complete a lone `-`, type a letter after it or use PowerShell 7. The bash completions also work with `sndbx.py` on Linux, macOS and WSL. In Git Bash, MSYS rewrites arguments like `/opt/web` into Windows paths before `sndbx` sees them, so use PowerShell there, or set `MSYS_NO_PATHCONV=1`.
+
 ## Run with docker
 
 Each command mounts the current directory at `/workspace` and the image's config directory from the table above.
@@ -142,6 +167,12 @@ ruby test/completion_test.rb      # one file
 ```
 
 The tests run `bin/sndbx` with a temporary `HOME` and a fake `docker` that records its arguments, so they need neither Docker nor existing settings. The completion tests call `_sndbx` in bash 4 or newer, like the completions themselves.
+
+The Python version has its own tests, which also run on Windows. The PowerShell completion tests run when `pwsh` or `powershell` is on `PATH`.
+
+```sh
+uv run --with pyyaml python -m unittest discover -s test -p "test_*.py"
+```
 
 ## License
 
